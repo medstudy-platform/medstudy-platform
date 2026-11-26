@@ -1,0 +1,19 @@
+{
+  "name": "medstudy-platform",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "MedStudy — Plateforme intelligente d'étude médicale multi-modules avec CMS Administrateur, SRS, Flashcards, QCM et import PDF/PowerPoint",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "vercel dev",
+    "migrate:supabase": "node scripts/migrate-to-supabase.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1",
+    "jszip": "^3.10.1",
+    "pdf-parse": "^1.1.1"
+  }
+}
