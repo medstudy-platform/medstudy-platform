@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MedStudy — Plateforme Intelligente d’Étude Médicale & CMS</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div id="auth-root"></div>
+
+  <div id="app-shell" class="app-shell">
+    <aside id="sidebar" class="sidebar"></aside>
+    <div id="sidebar-overlay" class="sidebar-overlay"></div>
+
+    <div class="main-wrap">
+      <header id="topbar" class="topbar"></header>
+      <main id="main-content" class="content-container" role="main">
+        <div class="card empty-state">Chargement de la plateforme MedStudy…</div>
+      </main>
+    </div>
+  </div>
+
+  <!-- Couche Données initiales (Seed de base : 12 cours d'Épidémiologie, 34 leçons, 101 flashcards, 113 QCM) -->
+  <script src="js/data/metadata.js"></script>
+  <script src="js/data/courses_p1.js"></script>
+  <script src="js/data/courses_p2.js"></script>
+  <script src="js/data/courses_p3.js"></script>
+  <script src="js/data/courses_p4.js"></script>
+  <script src="js/data/flashcards.js"></script>
+  <script src="js/data/qcms_p1.js"></script>
+  <script src="js/data/qcms_p2.js"></script>
+
+  <!-- Couche Moteur (API Serveur, Persistance synchronisée, SRS, Planificateur, Gamification) -->
+  <script src="js/core/api.js"></script>
+  <script src="js/core/storage.js"></script>
+  <script src="js/core/srs.js"></script>
+  <script src="js/core/planner.js"></script>
+  <script src="js/core/gamification.js"></script>
+
+  <!-- Couche Interface & Routeur (Étudiant + Auth + Admin CMS) -->
+  <script src="js/ui/icons.js"></script>
+  <script src="js/ui/components.js"></script>
+  <script src="js/ui/views_auth.js"></script>
+  <script src="js/ui/views_dashboard.js"></script>
+  <script src="js/ui/views_lesson.js"></script>
+  <script src="js/ui/views_tools.js"></script>
+  <script src="js/ui/views_admin.js"></script>
+  <script src="js/ui/app.js"></script>
+</body>
+</html>
