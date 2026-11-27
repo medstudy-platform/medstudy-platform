@@ -66,13 +66,10 @@ window.EpiUI = (function () {
     if (qcm.sourceType === 'source_exam_original') {
       return `<span class="badge badge-medium">📋 Question extraite du support${qcm.pageRef ? ' · ' + esc(qcm.pageRef) : ''}</span>`;
     }
-    if (qcm.sourceType === 'ai_generated_practice') {
-      return `<span class="badge badge-ai">✨ QCM d’entraînement généré par IA${qcm.pageRef ? ' · ' + esc(qcm.pageRef) : ''}</span>`;
+    if (qcm.sourceType === 'ai_generated_practice' || qcm.sourceType === 'ai_generated' || qcm.sourceType === 'ai_draft') {
+      return `<span class="badge badge-ai">🤖 Question générée par IA${qcm.pageRef ? ' · ' + esc(qcm.pageRef) : ''}</span>`;
     }
-    if (qcm.sourceType === 'ai_draft') {
-      return `<span class="badge badge-ai">✨ QCM généré par IA (Cours)${qcm.pageRef ? ' · ' + esc(qcm.pageRef) : ''}</span>`;
-    }
-    return `<span class="badge badge-ai">✨ QCM d’entraînement (Cours)${qcm.pageRef ? ' · ' + esc(qcm.pageRef) : ''}</span>`;
+    return `<span class="badge badge-ai">🤖 Question générée par IA (Cours)${qcm.pageRef ? ' · ' + esc(qcm.pageRef) : ''}</span>`;
   }
 
   function formatDateFR(isoStr) {
@@ -221,6 +218,7 @@ window.EpiUI = (function () {
           <span class="badge badge-neutral">${isMulti ? 'Choix multiple(s)' : 'Choix unique'}</span>
           ${qcm.isHard ? '<span class="badge badge-high">Piège / Difficile</span>' : ''}
           ${qcm.bmError ? '<span class="badge badge-red">⚠️ Corrigé BM erroné</span>' : ''}
+          ${qcm.needsReview ? '<span class="badge badge-vigilance">🔎 Nuance / Relecture signalée</span>' : ''}
           <span style="margin-left:auto;font-size:12px;color:var(--text-light);">${esc(qcm.topic)}</span>
         </div>
         <div class="qcm-stem">${options.number ? `<span class="edu-qcm-num">Q${options.number}</span> ` : ''}${fmtStem}</div>

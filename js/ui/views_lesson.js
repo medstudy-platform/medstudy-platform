@@ -132,6 +132,8 @@ window.EpiViewsLesson = (function () {
     }).join('');
 
     const mod = asArr(catalog.modules).find(m => m.id === course.moduleId);
+    const hasRevSheet = !!(course.metadata && course.metadata.revisionSheet && window.EpiViewsMaster);
+    const activeCourseTab = (hasRevSheet && o.courseTab === 'revision') ? 'revision' : 'roadmap';
     const attachments = asArr(course.attachments);
     const attachmentsHtml = attachments.length > 0 ? `
       <div class="j-attachments-strip">
@@ -211,10 +213,24 @@ window.EpiViewsLesson = (function () {
         </div>
       </div>
 
-      <h2 class="section-heading" style="margin-top:6px;">
-        <span>Feuille de route du cours (${cj.totalLessons} leçon${cj.totalLessons > 1 ? 's' : ''} · ${cj.totalPhases} phases · ${cj.totalSteps} étapes)</span>
-      </h2>
-      <div class="j-roadmap-list">${roadmapHtml || '<div class="card empty-state">Aucune leçon disponible dans ce cours pour le moment.</div>'}</div>
+      ${hasRevSheet ? `
+        <div class="tabs-row" style="margin-top:4px;">
+          <button type="button" class="tab-btn ${activeCourseTab === 'roadmap' ? 'active' : ''}" data-action="course-tab" data-tab="roadmap">
+            🗺️ Feuille de route (${cj.totalLessons} leçon${cj.totalLessons > 1 ? 's' : ''})
+          </button>
+          <button type="button" class="tab-btn ${activeCourseTab === 'revision' ? 'active' : ''}" data-action="course-tab" data-tab="revision">
+            📄 Fiche de révision (7 sections)
+          </button>
+        </div>` : ''}
+
+      ${activeCourseTab === 'revision' && hasRevSheet
+        ? window.EpiViewsMaster.renderRevisionSheetBlock(course, o.revChecks || {}, { isPreview })
+        : `
+          <h2 class="section-heading" style="margin-top:6px;">
+            <span>Feuille de route du cours (${cj.totalLessons} leçon${cj.totalLessons > 1 ? 's' : ''} · ${cj.totalPhases} phases · ${cj.totalSteps} étapes)</span>
+          </h2>
+          <div class="j-roadmap-list">${roadmapHtml || '<div class="card empty-state">Aucune leçon disponible dans ce cours pour le moment.</div>'}</div>
+        `}
     `;
   }
 
@@ -293,6 +309,7 @@ window.EpiViewsLesson = (function () {
           <span class="j-crumb-current">Leçon ${lj.lessonIndex}/${lj.totalLessonsInCourse} · ${esc(lesson.slideRange || lesson.id)}</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          ${course.metadata && course.metadata.revisionSheet ? `<button type="button" class="btn btn-secondary btn-sm" data-action="${isPreview ? 'admin-preview-course' : 'go-course-revision'}" data-course="${esc(course.id)}">📄 Fiche de révision</button>` : ''}
           ${!isPreview ? `<button type="button" class="btn ${lRec.studied ? 'btn-success' : 'btn-secondary'} btn-sm" data-action="toggle-studied" data-lesson="${esc(lesson.id)}">
             ${lRec.studied ? '✓ Marquée comme étudiée' : 'Marquer comme étudiée'}
           </button>` : ''}

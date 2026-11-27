@@ -310,8 +310,11 @@ window.EpiViewsTools = (function () {
     const f = runtime.qcmFilters || { courseId: 'all', sourceType: 'all', special: 'all' };
     const filtered = window.EpiData.qcms.filter(q => {
       if (f.courseId !== 'all' && q.courseId !== f.courseId) return false;
-      if (f.sourceType !== 'all' && q.sourceType !== f.sourceType) return false;
+      if (f.sourceType === 'bm_original' && q.sourceType !== 'bm_original') return false;
+      if (f.sourceType === 'ai_generated' && q.sourceType === 'bm_original') return false;
+      if (f.sourceType !== 'all' && f.sourceType !== 'bm_original' && f.sourceType !== 'ai_generated' && q.sourceType !== f.sourceType) return false;
       if (f.special === 'bm_errors' && !q.bmError) return false;
+      if (f.special === 'needs_review' && !q.needsReview) return false;
       if (f.special === 'failed' && !(profile.qcms[q.id] && profile.qcms[q.id].lastCorrect === false)) return false;
       if (f.special === 'unanswered' && (profile.qcms[q.id] && profile.qcms[q.id].attempts > 0)) return false;
       return true;
@@ -355,11 +358,12 @@ window.EpiViewsTools = (function () {
           <select class="select" data-filter="qcm-source">
             <option value="all" ${f.sourceType === 'all' ? 'selected' : ''}>Toutes sources</option>
             <option value="bm_original" ${f.sourceType === 'bm_original' ? 'selected' : ''}>BM Épidémiologie (Originaux)</option>
-            <option value="course_generated" ${f.sourceType === 'course_generated' ? 'selected' : ''}>Nouveaux QCM générés (Cours)</option>
+            <option value="ai_generated" ${f.sourceType === 'ai_generated' ? 'selected' : ''}>🤖 Questions générées par IA (Cours / 2026)</option>
           </select>
           <select class="select" data-filter="qcm-special">
             <option value="all" ${f.special === 'all' ? 'selected' : ''}>Toutes les questions</option>
             <option value="bm_errors" ${f.special === 'bm_errors' ? 'selected' : ''}>⚠️ Pièges avec erreur corrigé BM</option>
+            <option value="needs_review" ${f.special === 'needs_review' ? 'selected' : ''}>🔎 Nuances / Relecture signalée</option>
             <option value="failed" ${f.special === 'failed' ? 'selected' : ''}>🔴 Mes QCM ratés</option>
             <option value="unanswered" ${f.special === 'unanswered' ? 'selected' : ''}>Non encore répondus</option>
           </select>

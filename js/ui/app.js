@@ -12,11 +12,16 @@ window.EpiApp = (function () {
     user: null, // { id, email, name, role: 'admin'|'student' }
     authUi: { mode: 'login', email: '', error: null, busy: false },
 
-    route: 'dashboard', // dashboard | courses | course | lesson | priorities | revisions | weak | qcm | evolution | admin_courses | admin_add | admin_editor | admin_modules | admin_security
+    route: 'dashboard', // dashboard | courses | course | lesson | priorities | exam_analysis | final_strategy | revisions | weak | qcm | evolution | admin_courses | admin_inventory | admin_add | admin_editor | admin_modules | admin_security
     courseId: null,
+    courseTab: 'roadmap',
     lessonId: null,
     lessonStep: 'A',
     prioritiesTab: 'matrix',
+    analysisTab: 'frequencies',
+    analysisScoreFilter: 'all',
+    strategyTab: 'waves',
+    revChecks: {},
     weakFilter: 'all',
     courseFilters: { search: '', subject: 'all', moduleId: 'all', priority: 'all', status: 'all' },
     qcmFilters: { courseId: 'all', sourceType: 'all', special: 'all' },
@@ -24,9 +29,10 @@ window.EpiApp = (function () {
     sidebarOpen: false,
 
     // État CMS Administrateur
-    adminData: { modules: [], courses: [], flashcards: [], qcms: [], backups: [], users: [], importJobs: [], aiConfig: { provider: 'local', configured: false } },
+    adminData: { modules: [], courses: [], flashcards: [], qcms: [], backups: [], users: [], importJobs: [], sourceInventory: [], aiConfig: { provider: 'local', configured: false } },
     adminState: {
       filters: { status: 'all', moduleId: 'all', search: '' },
+      invFilters: { status: 'all', search: '' },
       addWizard: { createdCourseId: null, showNewModule: false, selectedModuleId: '', analyzing: false, uploading: false, pendingFiles: [], pendingSupportFiles: [], activeJob: null },
       editor: null,
       scanningPpts: false,
@@ -55,11 +61,24 @@ window.EpiApp = (function () {
     return !!(state.user && state.user.role === 'admin');
   }
 
+  function sortCoursesNaturally(list) {
+    const rank = (c) => {
+      const mC = String((c && (c.code || c.id)) || '').match(/^C(\d+)$/i);
+      if (mC) return parseInt(mC[1], 10);
+      const mP = String((c && c.code) || '').match(/^PPT(\d+)$/i);
+      if (mP) return 100 + parseInt(mP[1], 10);
+      return 500;
+    };
+    return window.EpiUI.asArr(list).slice().sort((a, b) => rank(a) - rank(b) || String(a.id).localeCompare(String(b.id)));
+  }
+
   function applyStudentCatalog(cat) {
     if (!cat) return;
+    const prevMasterAnalysis = window.EpiData && window.EpiData.masterExamAnalysis;
+    const prevMasterStrategy = window.EpiData && window.EpiData.masterFinalStrategy;
     window.EpiData = {
       modules: window.EpiUI.asArr(cat.modules),
-      courses: window.EpiUI.asArr(cat.courses).map(c => Object.assign({}, c, {
+      courses: sortCoursesNaturally(cat.courses).map(c => Object.assign({}, c, {
         lessons: window.EpiUI.asArr(c.lessons),
         sourceFiles: window.EpiUI.asArr(c.sourceFiles),
         attachments: window.EpiUI.asArr(c.attachments)
@@ -71,7 +90,9 @@ window.EpiApp = (function () {
       })),
       bmAudit: cat.bmAudit || {},
       bmErrors: window.EpiUI.asArr(cat.bmErrors),
-      outOfCourseBM: window.EpiUI.asArr(cat.outOfCourseBM)
+      outOfCourseBM: window.EpiUI.asArr(cat.outOfCourseBM),
+      masterExamAnalysis: cat.masterExamAnalysis || prevMasterAnalysis || null,
+      masterFinalStrategy: cat.masterFinalStrategy || prevMasterStrategy || null
     };
   }
 
@@ -95,6 +116,7 @@ window.EpiApp = (function () {
         backups: window.EpiUI.asArr(adm.backups),
         users: window.EpiUI.asArr(adm.users),
         importJobs: window.EpiUI.asArr(adm.importJobs),
+        sourceInventory: window.EpiUI.asArr(adm.sourceInventory).length ? window.EpiUI.asArr(adm.sourceInventory) : window.EpiUI.asArr(INITIAL_SEED_SNAPSHOT && INITIAL_SEED_SNAPSHOT.sourceInventory),
         aiConfig: adm.aiConfig || { provider: 'local', configured: false }
       };
       if (!state.adminState.addWizard.selectedModuleId && state.adminData.modules[0]) {
@@ -117,6 +139,7 @@ window.EpiApp = (function () {
         backups: window.EpiUI.asArr(adm.backups),
         users: window.EpiUI.asArr(adm.users),
         importJobs: window.EpiUI.asArr(adm.importJobs),
+        sourceInventory: window.EpiUI.asArr(adm.sourceInventory).length ? window.EpiUI.asArr(adm.sourceInventory) : window.EpiUI.asArr(INITIAL_SEED_SNAPSHOT && INITIAL_SEED_SNAPSHOT.sourceInventory),
         aiConfig: adm.aiConfig || { provider: 'local', configured: false }
       };
     }
@@ -143,6 +166,7 @@ window.EpiApp = (function () {
       activeLessonIdx: 0,
       fcLessonFilter: 'all',
       qcmLessonFilter: 'all',
+      qcmSourceFilter: 'all',
       majorLessonIds: [],
       qualityReport: (cloneCourse.aiExtraction && cloneCourse.aiExtraction.qualityReport) || (cloneCourse.metadata && cloneCourse.metadata.lastQualityReport) || null,
       activeJob: latestJob,
@@ -554,6 +578,8 @@ window.EpiApp = (function () {
     const navItems = [
       { route: 'dashboard', label: 'Tableau de bord', icon: 'home' },
       { route: 'courses', label: 'Mes cours', icon: 'book', badge: `${window.EpiData.courses.length}` },
+      { route: 'exam_analysis', label: 'Analyse des examens', icon: 'barChart', badge: '25 c.' },
+      { route: 'final_strategy', label: 'Stratégie finale', icon: 'sparkle', badge: 'Survie' },
       { route: 'priorities', label: 'Priorités d’examen', icon: 'target' },
       { route: 'revisions', label: 'Mes révisions', icon: 'repeat', badge: (rev.urgentCount + updatedCount) > 0 ? String(rev.urgentCount + updatedCount) : null, urgent: rev.urgentCount > 0 },
       { route: 'weak', label: 'Mes points faibles', icon: 'alert', badge: weak.length > 0 ? String(weak.length) : null, urgent: weak.some(w => w.mastery.level === 'red') },
@@ -563,8 +589,10 @@ window.EpiApp = (function () {
 
     const draftCount = state.adminData.courses.filter(c => c.status === 'draft').length;
     const pptCount = state.adminData.courses.filter(c => c.pptImport && c.pptImport.isPowerPoint).length;
+    const invCount = window.EpiUI.asArr(state.adminData.sourceInventory).length;
     const adminNavItems = isAdmin() ? [
       { route: 'admin_courses', label: 'Gestion des cours', icon: 'layers', badge: draftCount > 0 ? `${draftCount} br.` : String(state.adminData.courses.length) },
+      { route: 'admin_inventory', label: 'Inventaire sources', icon: 'fileText', badge: invCount > 0 ? String(invCount) : null },
       { route: 'admin_ppt_imports', label: 'Imports PowerPoint', icon: 'fileText', badge: pptCount > 0 ? String(pptCount) : null },
       { route: 'admin_add', label: 'Ajouter un cours', icon: 'plus' },
       { route: 'admin_modules', label: 'Modules médicaux', icon: 'book', badge: String(state.adminData.modules.length) },
@@ -589,15 +617,15 @@ window.EpiApp = (function () {
         </div>
       </div>
       <nav class="sidebar-nav" aria-label="Navigation principale">
-        <div class="nav-section-label">Apprentissage</div>
-        ${navItems.slice(0, 3).map(n => `
+        <div class="nav-section-label">Apprentissage & Stratégie</div>
+        ${navItems.slice(0, 5).map(n => `
           <button class="nav-item ${isRouteActive(n.route) ? 'active' : ''}" data-action="nav" data-route="${n.route}">
             ${window.EpiIcons.get(n.icon, 18)}
             <span>${n.label}</span>
             ${n.badge ? `<span class="nav-badge ${n.urgent ? 'urgent' : ''}">${n.badge}</span>` : ''}
           </button>`).join('')}
         <div class="nav-section-label">Mémoire & Suivi</div>
-        ${navItems.slice(3).map(n => `
+        ${navItems.slice(5).map(n => `
           <button class="nav-item ${isRouteActive(n.route) ? 'active' : ''}" data-action="nav" data-route="${n.route}">
             ${window.EpiIcons.get(n.icon, 18)}
             <span>${n.label}</span>
@@ -635,12 +663,15 @@ window.EpiApp = (function () {
       courses: 'Catalogue de cours médicaux',
       course: 'Feuille de route du cours',
       lesson: 'Studio d’apprentissage',
+      exam_analysis: 'Analyse des examens (Master 01 · 25 cours)',
+      final_strategy: 'Stratégie finale & Fiche de survie (Master 04)',
       priorities: 'Priorités d’examen & Audit BM',
       revisions: 'Mes révisions (Répétition espacée)',
       weak: 'Mes points faibles',
       qcm: 'Banque QCM & Simulation d’examen',
       evolution: 'Mon évolution',
       admin_courses: 'Administration — Gestion des cours',
+      admin_inventory: 'Administration — Inventaire des sources (51 + Master)',
       admin_ppt_imports: 'Administration — Imports PowerPoint (.ppt / .pptx)',
       admin_add: 'Administration — Ajouter un cours',
       admin_editor: 'Administration — Éditeur & Révision',
@@ -675,9 +706,14 @@ window.EpiApp = (function () {
     } else if (state.route === 'courses') {
       mainEl.innerHTML = window.EpiViewsDashboard.renderCourses(profile, state.courseFilters);
     } else if (state.route === 'course') {
-      mainEl.innerHTML = window.EpiViewsLesson.renderCourseOverview(profile, state.courseId);
+      const revMap = (profile && profile.revisionChecks && typeof profile.revisionChecks === 'object') ? profile.revisionChecks : state.revChecks;
+      mainEl.innerHTML = window.EpiViewsLesson.renderCourseOverview(profile, state.courseId, { courseTab: state.courseTab, revChecks: revMap });
     } else if (state.route === 'lesson') {
       mainEl.innerHTML = window.EpiViewsLesson.renderLessonStudio(profile, state.courseId, state.lessonId, state.lessonStep, state.runtime);
+    } else if (state.route === 'exam_analysis') {
+      mainEl.innerHTML = window.EpiViewsMaster.renderExamAnalysis(profile, state);
+    } else if (state.route === 'final_strategy') {
+      mainEl.innerHTML = window.EpiViewsMaster.renderFinalStrategy(profile, state);
     } else if (state.route === 'priorities') {
       mainEl.innerHTML = window.EpiViewsDashboard.renderPriorities(profile, state.prioritiesTab);
     } else if (state.route === 'revisions') {
@@ -695,10 +731,12 @@ window.EpiApp = (function () {
       mainEl.innerHTML = window.EpiViewsTools.renderEvolution(profile);
     } else if (state.route === 'admin_courses') {
       mainEl.innerHTML = window.EpiViewsAdmin.renderCoursesManager(state.adminData, state.adminState);
+    } else if (state.route === 'admin_inventory') {
+      mainEl.innerHTML = window.EpiViewsAdmin.renderSourceInventory(state.adminData, state.adminState);
     } else if (state.route === 'admin_ppt_imports') {
       mainEl.innerHTML = window.EpiViewsAdmin.renderPptImportsManager(state.adminData, state.adminState);
     } else if (state.route === 'admin_preview_course') {
-      mainEl.innerHTML = window.EpiViewsLesson.renderCourseOverview(profile, state.courseId, { catalog: state.adminData, isPreview: true });
+      mainEl.innerHTML = window.EpiViewsLesson.renderCourseOverview(profile, state.courseId, { catalog: state.adminData, isPreview: true, courseTab: state.courseTab, revChecks: state.revChecks });
     } else if (state.route === 'admin_preview_lesson') {
       mainEl.innerHTML = window.EpiViewsLesson.renderLessonStudio(profile, state.courseId, state.lessonId, state.lessonStep, state.runtime, { catalog: state.adminData, isPreview: true });
     } else if (state.route === 'admin_add') {
@@ -1698,9 +1736,73 @@ window.EpiApp = (function () {
         case 'go-course':
           state.route = 'course';
           state.courseId = btn.getAttribute('data-course');
+          state.courseTab = 'roadmap';
           state.sidebarOpen = false;
           render();
           window.scrollTo({ top: 0, behavior: 'smooth' });
+          break;
+
+        case 'go-course-revision':
+          state.route = 'course';
+          state.courseId = btn.getAttribute('data-course');
+          state.courseTab = 'revision';
+          state.sidebarOpen = false;
+          render();
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          break;
+
+        case 'course-tab':
+          state.courseTab = btn.getAttribute('data-tab') || 'roadmap';
+          render();
+          break;
+
+        case 'toggle-rev-check': {
+          const k = btn.getAttribute('data-key');
+          if (k) {
+            if (state.route === 'admin_preview_course') {
+              state.revChecks[k] = !state.revChecks[k];
+            } else {
+              const p = window.EpiStorage.getActiveProfile();
+              if (p) {
+                if (!p.revisionChecks || typeof p.revisionChecks !== 'object') p.revisionChecks = {};
+                p.revisionChecks[k] = !p.revisionChecks[k];
+                window.EpiStorage.save();
+              } else {
+                state.revChecks[k] = !state.revChecks[k];
+              }
+            }
+            render();
+          }
+          break;
+        }
+
+        case 'analysis-tab':
+          state.analysisTab = btn.getAttribute('data-tab') || 'frequencies';
+          render();
+          break;
+
+        case 'analysis-score-filter':
+          state.analysisScoreFilter = btn.getAttribute('data-level') || 'all';
+          render();
+          break;
+
+        case 'strategy-tab':
+          state.strategyTab = btn.getAttribute('data-tab') || 'waves';
+          render();
+          break;
+
+        case 'qcm-filter-course':
+          state.qcmFilters.courseId = btn.getAttribute('data-course') || 'all';
+          state.qcmLimit = 15;
+          state.route = 'qcm';
+          state.sidebarOpen = false;
+          render();
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+          break;
+
+        case 'admin-inv-filter-status':
+          state.adminState.invFilters.status = btn.getAttribute('data-status') || 'all';
+          render();
           break;
 
         case 'go-lesson':
@@ -2543,6 +2645,21 @@ window.EpiApp = (function () {
       return true;
     }
 
+    if (el.hasAttribute('data-ed-rev')) {
+      const rKey = el.getAttribute('data-ed-rev');
+      if (!ed.course.metadata || typeof ed.course.metadata !== 'object') ed.course.metadata = {};
+      if (!ed.course.metadata.revisionSheet || typeof ed.course.metadata.revisionSheet !== 'object') {
+        ed.course.metadata.revisionSheet = { sourceSummary: '', mustMemorize: [], mostFrequent: [], distinctions: [], formulas: [], traps: [], lessTime: [], checklist: [], darija: '' };
+      }
+      if (el.getAttribute('data-ed-rev-list') === '1') {
+        ed.course.metadata.revisionSheet[rKey] = el.value.split('\n').map(s => s.trim()).filter(Boolean);
+      } else {
+        ed.course.metadata.revisionSheet[rKey] = el.value;
+      }
+      ed.dirty = true;
+      return true;
+    }
+
     const fcField = el.getAttribute('data-ed-fc');
     if (fcField) {
       const fidx = Number(el.getAttribute('data-fidx'));
@@ -2683,8 +2800,16 @@ window.EpiApp = (function () {
       return;
     }
     if (filter === 'admin-module') { state.adminState.filters.moduleId = el.value; render(); return; }
+    if (filter === 'admin-inv-search') {
+      state.adminState.invFilters.search = el.value;
+      render();
+      const restored = document.querySelector('[data-filter="admin-inv-search"]');
+      if (restored) { restored.focus(); restored.setSelectionRange(el.value.length, el.value.length); }
+      return;
+    }
     if (filter === 'admin-ed-fc-lesson' && state.adminState.editor) { state.adminState.editor.fcLessonFilter = el.value; render(); return; }
     if (filter === 'admin-ed-qcm-lesson' && state.adminState.editor) { state.adminState.editor.qcmLessonFilter = el.value; render(); return; }
+    if (filter === 'admin-ed-qcm-source' && state.adminState.editor) { state.adminState.editor.qcmSourceFilter = el.value; render(); return; }
 
     if (filter === 'qcm-course') { state.qcmFilters.courseId = el.value; state.qcmLimit = 15; render(); return; }
     if (filter === 'qcm-source') { state.qcmFilters.sourceType = el.value; state.qcmLimit = 15; render(); return; }
@@ -2756,12 +2881,12 @@ window.EpiApp = (function () {
     document.addEventListener('click', handleClick);
     document.addEventListener('submit', handleSubmit);
     document.addEventListener('input', (e) => {
-      if (e.target.matches('[data-filter="courses-search"], [data-filter="admin-search"], [data-action="fc-draft"], [data-action="ar-draft"], [data-ed-course], [data-ed-lesson], [data-ed-sec], [data-ed-recall], [data-ed-mem], [data-ed-fc], [data-ed-qcm], [data-ed-qcm-opt], [data-ed-qcm-wrong]')) {
+      if (e.target.matches('[data-filter="courses-search"], [data-filter="admin-search"], [data-filter="admin-inv-search"], [data-action="fc-draft"], [data-action="ar-draft"], [data-ed-course], [data-ed-lesson], [data-ed-sec], [data-ed-recall], [data-ed-mem], [data-ed-rev], [data-ed-fc], [data-ed-qcm], [data-ed-qcm-opt], [data-ed-qcm-wrong]')) {
         handleInputOrChange(e);
       }
     });
     document.addEventListener('change', (e) => {
-      if (e.target.matches('select[data-filter], input[data-action="import-backup"], input[data-action="admin-upload-files"], input[data-action="admin-wizard-select-files"], select[data-action="admin-wizard-module-change"], [data-ed-course], [data-ed-lesson], [data-ed-lesson-reviewed], [data-ed-sec], [data-ed-recall], [data-ed-mem], [data-ed-fc], [data-ed-qcm], [data-ed-qcm-corr], [data-ed-qcm-wrong]')) {
+      if (e.target.matches('select[data-filter], input[data-action="import-backup"], input[data-action="admin-upload-files"], input[data-action="admin-wizard-select-files"], select[data-action="admin-wizard-module-change"], [data-ed-course], [data-ed-lesson], [data-ed-lesson-reviewed], [data-ed-sec], [data-ed-recall], [data-ed-mem], [data-ed-rev], [data-ed-fc], [data-ed-qcm], [data-ed-qcm-corr], [data-ed-qcm-wrong]')) {
         handleInputOrChange(e);
       }
     });

@@ -132,6 +132,13 @@ window.EpiViewsAdmin = (function () {
     const cntDraft = courses.filter(c => c.status === 'draft').length;
     const cntArch = courses.filter(c => c.status === 'archived').length;
 
+    const sortRank = (c) => {
+      const mC = String(c.code || c.id || '').match(/^C(\d+)$/i);
+      if (mC) return parseInt(mC[1], 10);
+      const mP = String(c.code || '').match(/^PPT(\d+)$/i);
+      if (mP) return 100 + parseInt(mP[1], 10);
+      return 500;
+    };
     const filtered = courses.filter(c => {
       if (f.status !== 'all' && c.status !== f.status) return false;
       if (f.moduleId !== 'all' && c.moduleId !== f.moduleId) return false;
@@ -141,7 +148,7 @@ window.EpiViewsAdmin = (function () {
         if (!hay.includes(q)) return false;
       }
       return true;
-    }).sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+    }).sort((a, b) => sortRank(a) - sortRank(b) || String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
 
     const rowsHtml = filtered.map(c => {
       const m = modMap[c.moduleId];
@@ -160,6 +167,7 @@ window.EpiViewsAdmin = (function () {
             <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px;">
               <span class="course-code-pill">${esc(c.code)}</span>
               ${isPpt ? `<span class="badge badge-medium">PPT · ${c.pptImport.slidesProcessed} diapos</span>` : ''}
+              ${c.metadata && c.metadata.revisionSheet ? '<span class="badge badge-green">📄 Fiche 7 sect.</span>' : ''}
               <strong style="color:var(--navy);">${esc(c.title)}</strong>
               ${needsRev && c.status === 'draft' ? '<span class="badge badge-vigilance">À relire</span>' : ''}
               ${ov && ov.resolution === 'pending' ? `<span class="badge badge-orange">⚠️ Chevauche ${esc(ov.matchedCourseCode)}</span>` : ''}
@@ -212,6 +220,7 @@ window.EpiViewsAdmin = (function () {
             <p class="card-subtitle">Ajoutez, analysez par IA, relisez, publiez, dépubliez ou archivez vos cours pour toutes les disciplines médicales.</p>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="btn btn-secondary btn-sm" data-action="nav" data-route="admin_inventory">${icon('fileText', 15)} Inventaire sources (${asArr(adminData.sourceInventory).length || 57})</button>
             <button type="button" class="btn btn-secondary btn-sm" data-action="nav" data-route="admin_modules">${icon('book', 15)} Gérer les modules</button>
             <button type="button" class="btn btn-primary" data-action="admin-go-add">${icon('plus', 16)} Ajouter un cours</button>
           </div>
@@ -550,6 +559,8 @@ window.EpiViewsAdmin = (function () {
       tabBody = renderEditorMetaTab(course, modules, ed, activeJob);
     } else if (tab === 'lessons') {
       tabBody = renderEditorLessonsTab(course, lessons, ed);
+    } else if (tab === 'revision') {
+      tabBody = renderEditorRevisionSheetTab(course, ed);
     } else if (tab === 'flashcards') {
       tabBody = renderEditorFlashcardsTab(lessons, flashcards, ed);
     } else if (tab === 'qcms') {
@@ -652,6 +663,9 @@ window.EpiViewsAdmin = (function () {
         </button>
         <button type="button" class="tab-btn ${tab === 'lessons' ? 'active' : ''}" data-action="admin-editor-tab" data-tab="lessons">
           Chapitres & Leçons (${lessons.length})
+        </button>
+        <button type="button" class="tab-btn ${tab === 'revision' ? 'active' : ''}" data-action="admin-editor-tab" data-tab="revision">
+          📄 Fiche de révision ${course.metadata && course.metadata.revisionSheet ? '✓' : ''}
         </button>
         <button type="button" class="tab-btn ${tab === 'flashcards' ? 'active' : ''}" data-action="admin-editor-tab" data-tab="flashcards">
           Flashcards (${flashcards.length})${fcNeedsReview > 0 ? ` · ${fcNeedsReview}` : ''}
@@ -1028,18 +1042,94 @@ window.EpiViewsAdmin = (function () {
       </div>`;
   }
 
+  function renderEditorRevisionSheetTab(course, ed) {
+    const rs = (course.metadata && course.metadata.revisionSheet) || {
+      sourceSummary: `${course.title} (${course.professor || ''})`,
+      mustMemorize: [],
+      mostFrequent: [],
+      distinctions: [],
+      formulas: [],
+      traps: [],
+      lessTime: [],
+      checklist: [],
+      darija: ''
+    };
+    const joinLines = (arr) => asArr(arr).join('\n');
+    return `
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-header" style="margin-bottom:12px;">
+          <div>
+            <h3 class="card-title">📄 Éditeur de la Fiche de révision (7 sections — Master 02A/02B)</h3>
+            <p class="card-subtitle">Modifiez librement chaque section (1 ligne = 1 point). Cliquez sur « Enregistrer » en haut pour sauvegarder dans Supabase.</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-field" style="grid-column:1 / -1;">
+            <label>En-tête source & volume BM</label>
+            <input type="text" class="input" value="${esc(rs.sourceSummary || '')}" data-ed-rev="sourceSummary">
+          </div>
+          <div class="form-field" style="grid-column:1 / -1;">
+            <label>💡 Résumé express en Darija algérienne</label>
+            <textarea rows="2" class="input" data-ed-rev="darija">${esc(rs.darija || '')}</textarea>
+          </div>
+          <div class="form-field">
+            <label>1. Ce que je DOIS mémoriser (1 point par ligne)</label>
+            <textarea rows="5" class="input" data-ed-rev="mustMemorize" data-ed-rev-list="1">${esc(joinLines(rs.mustMemorize))}</textarea>
+          </div>
+          <div class="form-field">
+            <label>2. Ce qui tombe le plus souvent dans la BM (1 point par ligne)</label>
+            <textarea rows="5" class="input" data-ed-rev="mostFrequent" data-ed-rev-list="1">${esc(joinLines(rs.mostFrequent))}</textarea>
+          </div>
+          <div class="form-field">
+            <label>4. Formules, chiffres & repères clés (1 point par ligne)</label>
+            <textarea rows="4" class="input" data-ed-rev="formulas" data-ed-rev-list="1">${esc(joinLines(rs.formulas))}</textarea>
+          </div>
+          <div class="form-field">
+            <label>5. Pièges d’examen & Erreurs BM (1 point par ligne)</label>
+            <textarea rows="4" class="input" data-ed-rev="traps" data-ed-rev-list="1">${esc(joinLines(rs.traps))}</textarea>
+          </div>
+          <div class="form-field">
+            <label>6. Moins représenté dans la BM (1 point par ligne)</label>
+            <textarea rows="3" class="input" data-ed-rev="lessTime" data-ed-rev-list="1">${esc(joinLines(rs.lessTime))}</textarea>
+          </div>
+          <div class="form-field">
+            <label>7. Checklist finale de révision (1 item par ligne)</label>
+            <textarea rows="3" class="input" data-ed-rev="checklist" data-ed-rev-list="1">${esc(joinLines(rs.checklist))}</textarea>
+          </div>
+        </div>
+      </div>
+      ${window.EpiViewsMaster ? window.EpiViewsMaster.renderRevisionSheetBlock(course, {}, { isPreview: true }) : ''}`;
+  }
+
   function renderEditorQcmsTab(lessons, qcms, ed) {
     const flt = ed.qcmLessonFilter || 'all';
-    const items = qcms.map((q, idx) => ({ q, idx })).filter(x => flt === 'all' || x.q.lessonId === flt);
+    const srcFlt = ed.qcmSourceFilter || 'all';
+    const bmCnt = qcms.filter(q => q.sourceType === 'bm_original').length;
+    const aiCnt = qcms.filter(q => q.sourceType !== 'bm_original').length;
+    const revCnt = qcms.filter(q => q.needsReview).length;
+
+    const items = qcms.map((q, idx) => ({ q, idx })).filter(({ q }) => {
+      if (flt !== 'all' && q.lessonId !== flt) return false;
+      if (srcFlt === 'bm_original' && q.sourceType !== 'bm_original') return false;
+      if (srcFlt === 'ai_generated' && q.sourceType === 'bm_original') return false;
+      if (srcFlt === 'needs_review' && !q.needsReview) return false;
+      return true;
+    });
 
     return `
       <div class="card" style="margin-bottom:14px;">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-            <strong style="font-size:15px;color:var(--navy);">Révision des QCM (${items.length})</strong>
+            <strong style="font-size:15px;color:var(--navy);">Révision des QCM (${items.length}/${qcms.length})</strong>
             <select class="select" data-filter="admin-ed-qcm-lesson">
               <option value="all" ${flt === 'all' ? 'selected' : ''}>Toutes les leçons</option>
               ${lessons.map((l, i) => `<option value="${esc(l.id)}" ${flt === l.id ? 'selected' : ''}>${i + 1}. ${esc(l.title)}</option>`).join('')}
+            </select>
+            <select class="select" data-filter="admin-ed-qcm-source">
+              <option value="all" ${srcFlt === 'all' ? 'selected' : ''}>Toutes sources (${qcms.length})</option>
+              <option value="bm_original" ${srcFlt === 'bm_original' ? 'selected' : ''}>Originaux BM (${bmCnt})</option>
+              <option value="ai_generated" ${srcFlt === 'ai_generated' ? 'selected' : ''}>🤖 Générés par IA / Cours (${aiCnt})</option>
+              <option value="needs_review" ${srcFlt === 'needs_review' ? 'selected' : ''}>🔎 À relire (${revCnt})</option>
             </select>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -1513,12 +1603,92 @@ window.EpiViewsAdmin = (function () {
       </div>`;
   }
 
+  // ==================== 7. INVENTAIRE DES SOURCES (51 FICHIERS + BM + 5 MASTER) ====================
+  function renderSourceInventory(adminData, adminState) {
+    const list = asArr(adminData.sourceInventory);
+    const f = (adminState && adminState.invFilters) || { status: 'all', search: '' };
+    const q = (f.search || '').trim().toLowerCase();
+
+    const cntImp = list.filter(x => x.status === 'imported').length;
+    const cntUpd = list.filter(x => x.status === 'updated').length;
+    const cntDup = list.filter(x => x.status === 'merged_duplicate').length;
+
+    const filtered = list.filter(x => {
+      if (f.status !== 'all' && x.status !== f.status) return false;
+      if (q) {
+        const hay = `${x.file} ${x.courseCode} ${x.category} ${x.type} ${x.note || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+
+    const statusLabel = (s) => {
+      if (s === 'updated') return '<span class="badge badge-medium">🔄 Mise à jour intégrée</span>';
+      if (s === 'merged_duplicate') return '<span class="badge badge-neutral">🔀 Doublon fusionné</span>';
+      return '<span class="badge badge-green">✓ Importé</span>';
+    };
+
+    const courseIdsSet = new Set(asArr(adminData.courses).map(c => c.id));
+
+    return `
+      <div class="card" style="margin-bottom:18px;">
+        <div class="card-header" style="margin-bottom:14px;">
+          <div>
+            <h2 class="card-title">${icon('fileText', 20)} Inventaire complet des sources & Livrables Master (${list.length} fichiers)</h2>
+            <p class="card-subtitle">Traçabilité intégrale des 51 supports officiels de Batna 2, de la BM Épidémiologie 2026 (476 QCM) et des 5 livrables stratégiques Master 01–04.</p>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" data-action="nav" data-route="admin_courses">← Gestion des cours</button>
+        </div>
+
+        <div class="kpi-grid" style="margin:0 0 16px;">
+          <div class="admin-kpi" data-action="admin-inv-filter-status" data-status="all"><span>Total sources tracées</span><strong>${list.length}</strong></div>
+          <div class="admin-kpi green" data-action="admin-inv-filter-status" data-status="imported"><span>Importés</span><strong>${cntImp}</strong></div>
+          <div class="admin-kpi orange" data-action="admin-inv-filter-status" data-status="updated"><span>Mises à jour intégrées</span><strong>${cntUpd}</strong></div>
+          <div class="admin-kpi neutral" data-action="admin-inv-filter-status" data-status="merged_duplicate"><span>Doublons stricts fusionnés</span><strong>${cntDup}</strong></div>
+        </div>
+
+        <div class="filter-bar" style="margin-bottom:0;">
+          <div class="time-selector">
+            <button type="button" class="time-pill ${f.status === 'all' ? 'active' : ''}" data-action="admin-inv-filter-status" data-status="all">Tous (${list.length})</button>
+            <button type="button" class="time-pill ${f.status === 'imported' ? 'active' : ''}" data-action="admin-inv-filter-status" data-status="imported">Importés (${cntImp})</button>
+            <button type="button" class="time-pill ${f.status === 'updated' ? 'active' : ''}" data-action="admin-inv-filter-status" data-status="updated">Mises à jour (${cntUpd})</button>
+            <button type="button" class="time-pill ${f.status === 'merged_duplicate' ? 'active' : ''}" data-action="admin-inv-filter-status" data-status="merged_duplicate">Doublons (${cntDup})</button>
+          </div>
+          <input type="search" class="input" style="flex:1;min-width:200px;" placeholder="Rechercher un fichier, un cours (C1–C25), Master…" value="${esc(f.search || '')}" data-filter="admin-inv-search">
+        </div>
+      </div>
+
+      <div class="data-table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Fichier source</th><th>Type & Catégorie</th><th>Cours</th><th>Statut</th><th>Détail d’intégration</th><th>Action</th></tr>
+          </thead>
+          <tbody>
+            ${filtered.map(it => `
+              <tr>
+                <td><strong style="font-size:13px;color:var(--navy);word-break:break-word;">${esc(it.file)}</strong></td>
+                <td><span class="badge badge-neutral">${esc(it.type)}</span> <span style="font-size:12px;color:var(--text-muted);">${esc(it.category)}</span></td>
+                <td><span class="course-code-pill">${esc(it.courseCode)}</span></td>
+                <td>${statusLabel(it.status)}</td>
+                <td style="font-size:12.5px;color:var(--text-muted);">${esc(it.note || '')}</td>
+                <td>
+                  ${courseIdsSet.has(it.courseCode)
+                    ? `<button type="button" class="btn btn-secondary btn-sm" data-action="admin-open-editor" data-cid="${esc(it.courseCode)}" data-tab="revision">Éditer ${esc(it.courseCode)}</button>`
+                    : '<span style="font-size:12px;color:var(--text-light);">Global</span>'}
+                </td>
+              </tr>`).join('') || '<tr><td colspan="6" class="empty-state">Aucun fichier source pour ce filtre.</td></tr>'}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
   return {
     renderCoursesManager,
     renderAddCourse,
     renderCourseEditor,
     renderModulesManager,
     renderSecurityBackups,
-    renderPptImportsManager
+    renderPptImportsManager,
+    renderSourceInventory
   };
 })();

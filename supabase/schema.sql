@@ -358,7 +358,7 @@ CREATE POLICY "progress_update_own" ON public.student_progress
 DROP POLICY IF EXISTS "site_meta_select_auth" ON public.site_meta;
 CREATE POLICY "site_meta_select_auth" ON public.site_meta
   FOR SELECT TO authenticated
-  USING (private.is_admin() OR key IN ('bmAudit', 'bmErrors', 'outOfCourseBM'));
+  USING (private.is_admin() OR key IN ('bmAudit', 'bmErrors', 'outOfCourseBM', 'masterExamAnalysis', 'masterFinalStrategy'));
 
 DROP POLICY IF EXISTS "site_meta_insert_admin" ON public.site_meta;
 CREATE POLICY "site_meta_insert_admin" ON public.site_meta

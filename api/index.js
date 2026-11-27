@@ -251,11 +251,18 @@ export default async function handler(req, res) {
     // GET /api/catalog (STRICTEMENT cours status = 'published')
     if (method === 'GET' && path === '/api/catalog') {
       const [{ data: pubCourses }, { data: allMods }, { data: metaRows }] = await Promise.all([
-        admin.from('courses').select('*').eq('status', 'published').order('code'),
+        admin.from('courses').select('*').eq('status', 'published'),
         admin.from('modules').select('*').order('code'),
-        admin.from('site_meta').select('key, value').in('key', ['bmAudit', 'bmErrors', 'outOfCourseBM'])
+        admin.from('site_meta').select('key, value').in('key', ['bmAudit', 'bmErrors', 'outOfCourseBM', 'masterExamAnalysis', 'masterFinalStrategy'])
       ]);
-      const courses = (pubCourses || []).map(mapCourseRow);
+      const sortRank = (c) => {
+        const mC = String(c.code || c.id || '').match(/^C(\d+)$/i);
+        if (mC) return parseInt(mC[1], 10);
+        const mP = String(c.code || '').match(/^PPT(\d+)$/i);
+        if (mP) return 100 + parseInt(mP[1], 10);
+        return 500;
+      };
+      const courses = (pubCourses || []).map(mapCourseRow).sort((a, b) => sortRank(a) - sortRank(b) || String(a.id).localeCompare(String(b.id)));
       const pubCourseIds = courses.map((c) => c.id);
       const pubModIds = new Set(courses.map((c) => c.moduleId));
 
@@ -284,7 +291,9 @@ export default async function handler(req, res) {
         qcms: (qRows || []).map(mapQcmRow),
         bmAudit: metaMap.bmAudit || {},
         bmErrors: Array.isArray(metaMap.bmErrors) ? metaMap.bmErrors : [],
-        outOfCourseBM: Array.isArray(metaMap.outOfCourseBM) ? metaMap.outOfCourseBM : []
+        outOfCourseBM: Array.isArray(metaMap.outOfCourseBM) ? metaMap.outOfCourseBM : [],
+        masterExamAnalysis: metaMap.masterExamAnalysis || null,
+        masterFinalStrategy: metaMap.masterFinalStrategy || null
       });
     }
 
@@ -349,17 +358,19 @@ export default async function handler(req, res) {
 
       // GET /api/admin/catalog
       if (method === 'GET' && path === '/api/admin/catalog') {
-        const [{ data: mods }, { data: courses }, { data: fcs }, { data: qs }, { data: bks }, { data: users }, { data: aiRow }, { data: jobsRows }] = await Promise.all([
+        const [{ data: mods }, { data: courses }, { data: fcs }, { data: qs }, { data: bks }, { data: users }, { data: metaRows }, { data: jobsRows }] = await Promise.all([
           admin.from('modules').select('*').order('code'),
           admin.from('courses').select('*').order('updated_at', { ascending: false }),
           admin.from('flashcards').select('*'),
           admin.from('qcms').select('*'),
           admin.from('db_backups').select('filename, size_bytes, created_at').order('created_at', { ascending: false }).limit(25),
           admin.from('profiles').select('id, email, name, role, created_at, last_login_at').order('created_at'),
-          admin.from('site_meta').select('value').eq('key', 'aiConfig').maybeSingle(),
+          admin.from('site_meta').select('key, value').in('key', ['aiConfig', 'sourceInventory', 'bmAudit', 'bmErrors', 'outOfCourseBM', 'masterExamAnalysis', 'masterFinalStrategy']),
           admin.from('course_import_jobs').select('id, course_id, created_by, status, current_stage, current_stage_key, progress_pct, ai_mode, stages, logs, quality_report, error_message, retry_count, created_at, updated_at, completed_at').order('created_at', { ascending: false }).limit(50)
         ]);
-        const aiMeta = (aiRow && aiRow.value) || {};
+        const metaMap = {};
+        (metaRows || []).forEach((r) => { metaMap[r.key] = r.value; });
+        const aiMeta = metaMap.aiConfig || {};
         const srvAi = getServerAiConfig(aiMeta);
         return sendJson(res, 200, {
           modules: (mods || []).map(mapModuleRow),
@@ -369,6 +380,12 @@ export default async function handler(req, res) {
           backups: (bks || []).map((b) => ({ filename: b.filename, sizeBytes: b.size_bytes, createdAt: b.created_at })),
           users: (users || []).map((u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, createdAt: u.created_at, lastLoginAt: u.last_login_at })),
           importJobs: (jobsRows || []).map((j) => mapImportJobRow(j, false)),
+          sourceInventory: Array.isArray(metaMap.sourceInventory) ? metaMap.sourceInventory : [],
+          bmAudit: metaMap.bmAudit || {},
+          bmErrors: Array.isArray(metaMap.bmErrors) ? metaMap.bmErrors : [],
+          outOfCourseBM: Array.isArray(metaMap.outOfCourseBM) ? metaMap.outOfCourseBM : [],
+          masterExamAnalysis: metaMap.masterExamAnalysis || null,
+          masterFinalStrategy: metaMap.masterFinalStrategy || null,
           aiConfig: {
             provider: srvAi.provider,
             model: srvAi.model,

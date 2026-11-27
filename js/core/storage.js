@@ -37,6 +37,7 @@ window.EpiStorage = (function () {
       flashcards: {},
       qcms: {},
       lessonSrs: {},
+      revisionChecks: {},
       dailyLog: {},
       examHistory: [],
       badgesUnlocked: [],
@@ -54,6 +55,7 @@ window.EpiStorage = (function () {
       flashcards: raw.flashcards && typeof raw.flashcards === 'object' ? raw.flashcards : {},
       qcms: raw.qcms && typeof raw.qcms === 'object' ? raw.qcms : {},
       lessonSrs: raw.lessonSrs && typeof raw.lessonSrs === 'object' ? raw.lessonSrs : {},
+      revisionChecks: raw.revisionChecks && typeof raw.revisionChecks === 'object' ? raw.revisionChecks : {},
       dailyLog: raw.dailyLog && typeof raw.dailyLog === 'object' ? raw.dailyLog : {},
       examHistory: Array.isArray(raw.examHistory) ? raw.examHistory : [],
       badgesUnlocked: Array.isArray(raw.badgesUnlocked) ? raw.badgesUnlocked : []

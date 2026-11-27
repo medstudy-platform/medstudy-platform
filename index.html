@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MedStudy — Plateforme Intelligente d’Étude Médicale & CMS</title>
-  <link rel="stylesheet" href="css/styles.css?v=20261113c">
+  <link rel="stylesheet" href="css/styles.css?v=20261113e">
 </head>
 <body>
   <div id="auth-root"></div>
@@ -21,34 +21,36 @@
     </div>
   </div>
 
-  <!-- Couche Données initiales (Seed de base : 12 cours d'Épidémiologie, 34 leçons, 101 flashcards, 113 QCM) -->
-  <script src="js/data/metadata.js?v=20261113c"></script>
-  <script src="js/data/courses_p1.js?v=20261113c"></script>
-  <script src="js/data/courses_p2.js?v=20261113c"></script>
-  <script src="js/data/courses_p3.js?v=20261113c"></script>
-  <script src="js/data/courses_p4.js?v=20261113c"></script>
-  <script src="js/data/flashcards.js?v=20261113c"></script>
-  <script src="js/data/qcms_p1.js?v=20261113c"></script>
-  <script src="js/data/qcms_p2.js?v=20261113c"></script>
+  <!-- Couche Données initiales (Seed complet 25 cours d'Épidémiologie C1–C25 + Fiches 7 sections + Master 01–04) -->
+  <script src="js/data/metadata.js?v=20261113e"></script>
+  <script src="js/data/courses_p1.js?v=20261113e"></script>
+  <script src="js/data/courses_p2.js?v=20261113e"></script>
+  <script src="js/data/courses_p3.js?v=20261113e"></script>
+  <script src="js/data/courses_p4.js?v=20261113e"></script>
+  <script src="js/data/flashcards.js?v=20261113e"></script>
+  <script src="js/data/qcms_p1.js?v=20261113e"></script>
+  <script src="js/data/qcms_p2.js?v=20261113e"></script>
+  <script src="js/data/master25_bundle.js?v=20261113e"></script>
 
   <!-- Couche Moteur (API Serveur, Persistance synchronisée, SRS, Parcours Unifié, Planificateur, Gamification) -->
-  <script src="js/core/api.js?v=20261113c"></script>
-  <script src="js/core/storage.js?v=20261113c"></script>
-  <script src="js/core/srs.js?v=20261113c"></script>
-  <script src="js/core/journey.js?v=20261113c"></script>
-  <script src="js/core/planner.js?v=20261113c"></script>
-  <script src="js/core/gamification.js?v=20261113c"></script>
+  <script src="js/core/api.js?v=20261113e"></script>
+  <script src="js/core/storage.js?v=20261113e"></script>
+  <script src="js/core/srs.js?v=20261113e"></script>
+  <script src="js/core/journey.js?v=20261113e"></script>
+  <script src="js/core/planner.js?v=20261113e"></script>
+  <script src="js/core/gamification.js?v=20261113e"></script>
 
-  <!-- Couche Interface & Routeur (Étudiant + Auth + Admin CMS) -->
-  <script src="js/ui/icons.js?v=20261113c"></script>
-  <script src="js/ui/components.js?v=20261113c"></script>
-  <script src="js/ui/content_formatter.js?v=20261113c"></script>
-  <script src="js/ui/journey_ui.js?v=20261113c"></script>
-  <script src="js/ui/views_auth.js?v=20261113c"></script>
-  <script src="js/ui/views_dashboard.js?v=20261113c"></script>
-  <script src="js/ui/views_lesson.js?v=20261113c"></script>
-  <script src="js/ui/views_tools.js?v=20261113c"></script>
-  <script src="js/ui/views_admin.js?v=20261113c"></script>
-  <script src="js/ui/app.js?v=20261113c"></script>
+  <!-- Couche Interface & Routeur (Étudiant + Auth + Master 01–04 + Admin CMS) -->
+  <script src="js/ui/icons.js?v=20261113e"></script>
+  <script src="js/ui/components.js?v=20261113e"></script>
+  <script src="js/ui/content_formatter.js?v=20261113e"></script>
+  <script src="js/ui/journey_ui.js?v=20261113e"></script>
+  <script src="js/ui/views_auth.js?v=20261113e"></script>
+  <script src="js/ui/views_dashboard.js?v=20261113e"></script>
+  <script src="js/ui/views_lesson.js?v=20261113e"></script>
+  <script src="js/ui/views_tools.js?v=20261113e"></script>
+  <script src="js/ui/views_master.js?v=20261113e"></script>
+  <script src="js/ui/views_admin.js?v=20261113e"></script>
+  <script src="js/ui/app.js?v=20261113e"></script>
 </body>
 </html>

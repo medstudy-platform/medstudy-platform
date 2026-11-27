@@ -191,6 +191,25 @@ window.EpiViewsDashboard = (function () {
           </div>
         </div>` : ''}
 
+      <section class="two-col" style="margin-bottom:20px;">
+        <div class="card" style="margin:0;border-left:4px solid var(--primary);display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:210px;">
+            <span class="badge badge-bm" style="margin-bottom:6px;">Master 01 · Audit 25 cours</span>
+            <h3 class="card-title" style="margin:0 0 4px;">📊 Analyse des examens BM (476 QCM)</h3>
+            <p class="card-subtitle" style="margin:0;">Fréquences par cours (C1–C25), répétitions exactes, scoring 0–100 et 26 erreurs corrigées.</p>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" data-action="nav" data-route="exam_analysis">Ouvrir l’analyse →</button>
+        </div>
+        <div class="card" style="margin:0;border-left:4px solid #7c3aed;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:210px;">
+            <span class="badge badge-ai" style="margin-bottom:6px;">Master 04 · Dernière minute</span>
+            <h3 class="card-title" style="margin:0 0 4px;">⚡ Stratégie finale & Fiche de survie</h3>
+            <p class="card-subtitle" style="margin:0;">Plan en 4 vagues, Top 20 examens, formules, calendrier HPV 2026 et Top 12 pièges BM.</p>
+          </div>
+          <button type="button" class="btn btn-navy btn-sm" data-action="nav" data-route="final_strategy">Plan & Survie →</button>
+        </div>
+      </section>
+
       <div class="section-heading">
         <span>Mes cours publiés (${window.EpiData.courses.length} cours · ${window.EpiData.modules.length} modules)</span>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -251,7 +270,10 @@ window.EpiViewsDashboard = (function () {
           <div class="progress-bar"><div class="progress-fill ${pct === 100 ? 'green' : ''}" style="width:${pct}%"></div></div>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:auto;padding-top:4px;">
-          <button class="btn btn-ghost btn-sm" data-action="go-course" data-course="${esc(course.id)}">Feuille de route</button>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="btn btn-ghost btn-sm" data-action="go-course" data-course="${esc(course.id)}">Feuille de route</button>
+            ${course.metadata && course.metadata.revisionSheet ? `<button class="btn btn-secondary btn-sm" data-action="go-course-revision" data-course="${esc(course.id)}" title="Ouvrir la fiche de révision en 7 sections">📄 Fiche</button>` : ''}
+          </div>
           ${firstTarget ? `<button class="btn btn-primary btn-sm" data-action="go-lesson" data-course="${esc(course.id)}" data-lesson="${esc(firstTarget.id)}" data-step="${esc(targetPhase)}" data-substep="${esc(targetSubStep)}">${ctaText}</button>` : ''}
         </div>
       </article>`;
