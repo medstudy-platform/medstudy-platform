@@ -91,6 +91,8 @@ CREATE TABLE IF NOT EXISTS public.courses (
   priority_score  INTEGER NOT NULL DEFAULT 50,
   vigilance_2026  BOOLEAN NOT NULL DEFAULT FALSE,
   summary         TEXT NOT NULL DEFAULT '',
+  academic_year   TEXT NOT NULL DEFAULT '',
+  metadata        JSONB NOT NULL DEFAULT '{}'::jsonb,
   status          TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived')),
   version         INTEGER NOT NULL DEFAULT 1,
   lessons         JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -119,6 +121,8 @@ CREATE TABLE IF NOT EXISTS public.flashcards (
   slide_title  TEXT NOT NULL DEFAULT '',
   source_file  TEXT NOT NULL DEFAULT '',
   source_type  TEXT NOT NULL DEFAULT 'course_generated',
+  provenance   TEXT NOT NULL DEFAULT 'source_explicit',
+  chapter_title TEXT NOT NULL DEFAULT '',
   needs_review BOOLEAN NOT NULL DEFAULT FALSE,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -139,6 +143,8 @@ CREATE TABLE IF NOT EXISTS public.qcms (
   slide_num     INTEGER,
   slide_title   TEXT NOT NULL DEFAULT '',
   source_file   TEXT NOT NULL DEFAULT '',
+  provenance    TEXT NOT NULL DEFAULT 'source_explicit',
+  chapter_title TEXT NOT NULL DEFAULT '',
   multi_select  BOOLEAN NOT NULL DEFAULT FALSE,
   is_hard       BOOLEAN NOT NULL DEFAULT FALSE,
   needs_review  BOOLEAN NOT NULL DEFAULT FALSE,
@@ -181,6 +187,31 @@ CREATE TABLE IF NOT EXISTS public.db_backups (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 9. JOBS DE TRAITEMENT UNIVERSEL DE COURS (Pipeline 11 étapes + logs + reprise)
+CREATE TABLE IF NOT EXISTS public.course_import_jobs (
+  id                TEXT PRIMARY KEY,
+  course_id         TEXT NOT NULL REFERENCES public.courses(id) ON DELETE CASCADE,
+  created_by        UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  status            TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
+  current_stage     INTEGER NOT NULL DEFAULT 1,
+  current_stage_key TEXT NOT NULL DEFAULT 'file_uploaded',
+  progress_pct      INTEGER NOT NULL DEFAULT 0 CHECK (progress_pct >= 0 AND progress_pct <= 100),
+  ai_mode           TEXT NOT NULL DEFAULT 'deterministic',
+  stages            JSONB NOT NULL DEFAULT '[]'::jsonb,
+  logs              JSONB NOT NULL DEFAULT '[]'::jsonb,
+  artifacts         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  quality_report    JSONB NOT NULL DEFAULT '{}'::jsonb,
+  error_message     TEXT NOT NULL DEFAULT '',
+  retry_count       INTEGER NOT NULL DEFAULT 0,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at      TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_import_jobs_course ON public.course_import_jobs(course_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_import_jobs_status ON public.course_import_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_import_jobs_created_by ON public.course_import_jobs(created_by);
+
 -- ==========================================================================
 -- ROW LEVEL SECURITY (RLS) — PROTECTION STRICTE AU NIVEAU BASE DE DONNÉES
 -- ==========================================================================
@@ -192,6 +223,7 @@ ALTER TABLE public.qcms             ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.student_progress ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.site_meta        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.db_backups       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.course_import_jobs ENABLE ROW LEVEL SECURITY;
 
 -- PROFILES
 DROP POLICY IF EXISTS "profiles_select_own_or_admin" ON public.profiles;
@@ -352,6 +384,28 @@ CREATE POLICY "backups_insert_admin" ON public.db_backups
 
 DROP POLICY IF EXISTS "backups_delete_admin" ON public.db_backups;
 CREATE POLICY "backups_delete_admin" ON public.db_backups
+  FOR DELETE TO authenticated
+  USING (private.is_admin());
+
+-- COURSE IMPORT JOBS (strictement admin)
+DROP POLICY IF EXISTS "import_jobs_select_admin" ON public.course_import_jobs;
+CREATE POLICY "import_jobs_select_admin" ON public.course_import_jobs
+  FOR SELECT TO authenticated
+  USING (private.is_admin());
+
+DROP POLICY IF EXISTS "import_jobs_insert_admin" ON public.course_import_jobs;
+CREATE POLICY "import_jobs_insert_admin" ON public.course_import_jobs
+  FOR INSERT TO authenticated
+  WITH CHECK (private.is_admin());
+
+DROP POLICY IF EXISTS "import_jobs_update_admin" ON public.course_import_jobs;
+CREATE POLICY "import_jobs_update_admin" ON public.course_import_jobs
+  FOR UPDATE TO authenticated
+  USING (private.is_admin())
+  WITH CHECK (private.is_admin());
+
+DROP POLICY IF EXISTS "import_jobs_delete_admin" ON public.course_import_jobs;
+CREATE POLICY "import_jobs_delete_admin" ON public.course_import_jobs
   FOR DELETE TO authenticated
   USING (private.is_admin());
 

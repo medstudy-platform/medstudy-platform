@@ -18,13 +18,20 @@ import {
   courseToDbRow,
   flashcardToDbRow,
   qcmToDbRow,
-  createEmptyProgress
+  createEmptyProgress,
+  mapImportJobRow
 } from './_lib/supabase.js';
 import {
-  validateFileMagicBytes,
-  analyzePptxBuffer,
-  analyzePdfBuffer
+  validateFileMagicBytes
 } from './_lib/extractors.js';
+import {
+  STAGE_DEFINITIONS,
+  createInitialStages,
+  executeImportJobStage,
+  runQualityAudit,
+  regenerateSingleLesson
+} from './_lib/processor.js';
+import { getServerAiConfig } from './_lib/ai_client.js';
 
 function sendJson(res, status, payload) {
   res.statusCode = status;
@@ -342,16 +349,18 @@ export default async function handler(req, res) {
 
       // GET /api/admin/catalog
       if (method === 'GET' && path === '/api/admin/catalog') {
-        const [{ data: mods }, { data: courses }, { data: fcs }, { data: qs }, { data: bks }, { data: users }, { data: aiRow }] = await Promise.all([
+        const [{ data: mods }, { data: courses }, { data: fcs }, { data: qs }, { data: bks }, { data: users }, { data: aiRow }, { data: jobsRows }] = await Promise.all([
           admin.from('modules').select('*').order('code'),
           admin.from('courses').select('*').order('updated_at', { ascending: false }),
           admin.from('flashcards').select('*'),
           admin.from('qcms').select('*'),
           admin.from('db_backups').select('filename, size_bytes, created_at').order('created_at', { ascending: false }).limit(25),
           admin.from('profiles').select('id, email, name, role, created_at, last_login_at').order('created_at'),
-          admin.from('site_meta').select('value').eq('key', 'aiConfig').maybeSingle()
+          admin.from('site_meta').select('value').eq('key', 'aiConfig').maybeSingle(),
+          admin.from('course_import_jobs').select('id, course_id, created_by, status, current_stage, current_stage_key, progress_pct, ai_mode, stages, logs, quality_report, error_message, retry_count, created_at, updated_at, completed_at').order('created_at', { ascending: false }).limit(50)
         ]);
         const aiMeta = (aiRow && aiRow.value) || {};
+        const srvAi = getServerAiConfig(aiMeta);
         return sendJson(res, 200, {
           modules: (mods || []).map(mapModuleRow),
           courses: (courses || []).map(mapCourseRow),
@@ -359,9 +368,12 @@ export default async function handler(req, res) {
           qcms: (qs || []).map(mapQcmRow),
           backups: (bks || []).map((b) => ({ filename: b.filename, sizeBytes: b.size_bytes, createdAt: b.created_at })),
           users: (users || []).map((u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, createdAt: u.created_at, lastLoginAt: u.last_login_at })),
+          importJobs: (jobsRows || []).map((j) => mapImportJobRow(j, false)),
           aiConfig: {
-            provider: aiMeta.provider || process.env.AI_PROVIDER || 'local',
-            configured: !!(process.env.AI_API_KEY || aiMeta.configured)
+            provider: srvAi.provider,
+            model: srvAi.model,
+            configured: srvAi.enabled,
+            envControlled: true
           }
         });
       }
@@ -440,6 +452,8 @@ export default async function handler(req, res) {
           priority_score: priority === 'very_high' ? 85 : (priority === 'high' ? 70 : (priority === 'low' ? 30 : 50)),
           vigilance_2026: !!body.vigilance2026,
           summary: String(body.summary || '').trim(),
+          academic_year: String(body.academicYear || '').trim(),
+          metadata: body.metadata && typeof body.metadata === 'object' ? body.metadata : {},
           status: 'draft',
           version: 1,
           lessons: [],
@@ -563,57 +577,384 @@ export default async function handler(req, res) {
         return sendJson(res, 200, { ok: true, course: mapCourseRow(updated) });
       }
 
-      // ANALYZE COURSE (PDF ou PPTX depuis Supabase Storage)
+      // ---------- PIPELINE UNIVERSEL 11 ÉTAPES (JOBS PERSISTANTS + REPRISE + CONTRÔLE QUALITÉ) ----------
+      const downloadCourseFilesFromStorage = async (fileList) => {
+        const out = [];
+        for (const f of (fileList || [])) {
+          const { data: blob, error: dlErr } = await admin.storage.from(STORAGE_BUCKET).download(f.storagePath);
+          if (dlErr || !blob) throw new Error(`Fichier introuvable dans Supabase Storage : ${f.originalName}`);
+          out.push({
+            fileId: f.fileId,
+            originalName: f.originalName,
+            kind: f.kind,
+            buffer: Buffer.from(await blob.arrayBuffer())
+          });
+        }
+        return out;
+      };
+
+      const commitFinalJobPayload = async (cid, courseObj, finalPayload) => {
+        const now = new Date().toISOString();
+        const patch = {
+          lessons: finalPayload.lessons,
+          ai_extraction: finalPayload.aiExtraction,
+          status: 'draft',
+          updated_at: now
+        };
+        if (finalPayload.pptImport) patch.ppt_import = finalPayload.pptImport;
+        if (finalPayload.detectedProfessor && (!courseObj.professor || /Enseignant — Faculté de Médecine/i.test(courseObj.professor))) {
+          patch.professor = finalPayload.detectedProfessor;
+        }
+        if (finalPayload.detectedAcademicYear && !courseObj.academicYear) {
+          patch.academic_year = finalPayload.detectedAcademicYear;
+        }
+        patch.metadata = {
+          ...(courseObj.metadata || {}),
+          lastQualityReport: finalPayload.qualityReport,
+          approved: false
+        };
+        const { data: updatedCourse } = await admin.from('courses').update(patch).eq('id', cid).select('*').single();
+
+        await admin.from('flashcards').delete().eq('course_id', cid);
+        if (finalPayload.flashcards.length) {
+          await admin.from('flashcards').insert(finalPayload.flashcards.map((f) => flashcardToDbRow(f, cid)));
+        }
+        await admin.from('qcms').delete().eq('course_id', cid);
+        if (finalPayload.qcms.length) {
+          await admin.from('qcms').insert(finalPayload.qcms.map((q) => qcmToDbRow(q, cid)));
+        }
+        return mapCourseRow(updatedCourse);
+      };
+
+      // POST /api/admin/courses/:id/jobs — Créer un job de traitement universel (exécute l'étape 1 immédiatement)
+      const createJobMatch = path.match(/^\/api\/admin\/courses\/([a-zA-Z0-9_-]+)\/jobs$/);
+      if (method === 'POST' && createJobMatch) {
+        const cid = createJobMatch[1];
+        const { data: cRow } = await admin.from('courses').select('*').eq('id', cid).maybeSingle();
+        if (!cRow) return sendJson(res, 404, { error: 'Cours introuvable.' });
+        const course = mapCourseRow(cRow);
+
+        await createCloudBackup(admin, `pre_import_${cid}`);
+        const { data: aiRow } = await admin.from('site_meta').select('value').eq('key', 'aiConfig').maybeSingle();
+        const aiCfg = getServerAiConfig(aiRow?.value);
+
+        const jobId = makeId('JOB');
+        const now = new Date().toISOString();
+        const initialJob = {
+          id: jobId,
+          course_id: cid,
+          created_by: user.id,
+          status: 'running',
+          current_stage: 1,
+          current_stage_key: STAGE_DEFINITIONS[0].key,
+          progress_pct: 0,
+          ai_mode: aiCfg.enabled ? `${aiCfg.provider}:${aiCfg.model}` : 'deterministic_medical',
+          stages: createInitialStages(),
+          logs: [{ ts: now, stage: 1, key: 'file_uploaded', level: 'info', message: `Job universel ${jobId} démarré pour « ${course.title} ».` }],
+          artifacts: {},
+          quality_report: {},
+          error_message: '',
+          retry_count: 0,
+          created_at: now,
+          updated_at: now
+        };
+        const { error: insErr } = await admin.from('course_import_jobs').insert(initialJob);
+        if (insErr) return sendJson(res, 500, { error: insErr.message });
+
+        const step1 = await executeImportJobStage({
+          job: mapImportJobRow(initialJob, true),
+          course,
+          existingCourses: [],
+          downloadFilesFn: downloadCourseFilesFromStorage,
+          siteMetaAiConfig: aiRow?.value,
+          targetStage: 1
+        });
+
+        const { data: savedJob } = await admin.from('course_import_jobs').update({
+          status: step1.status,
+          current_stage: step1.currentStage,
+          current_stage_key: step1.currentStageKey,
+          progress_pct: step1.progressPct,
+          ai_mode: step1.aiMode,
+          stages: step1.stages,
+          logs: step1.logs,
+          artifacts: step1.artifacts,
+          error_message: step1.errorMessage,
+          updated_at: new Date().toISOString()
+        }).eq('id', jobId).select('*').single();
+
+        if (!step1.ok) {
+          return sendJson(res, 400, { ok: false, error: step1.errorMessage, job: mapImportJobRow(savedJob, false) });
+        }
+        return sendJson(res, 201, { ok: true, job: mapImportJobRow(savedJob, false) });
+      }
+
+      // GET /api/admin/courses/:id/jobs — Historique des jobs pour un cours
+      if (method === 'GET' && createJobMatch) {
+        const cid = createJobMatch[1];
+        const { data: rows } = await admin
+          .from('course_import_jobs')
+          .select('id, course_id, created_by, status, current_stage, current_stage_key, progress_pct, ai_mode, stages, logs, quality_report, error_message, retry_count, created_at, updated_at, completed_at')
+          .eq('course_id', cid)
+          .order('created_at', { ascending: false })
+          .limit(10);
+        return sendJson(res, 200, { ok: true, jobs: (rows || []).map((r) => mapImportJobRow(r, false)) });
+      }
+
+      // GET /api/admin/jobs/:jobId — État détaillé d'un job
+      const jobIdMatch = path.match(/^\/api\/admin\/jobs\/([a-zA-Z0-9_-]+)$/);
+      if (method === 'GET' && jobIdMatch) {
+        const jid = jobIdMatch[1];
+        const { data: jRow } = await admin.from('course_import_jobs').select('id, course_id, created_by, status, current_stage, current_stage_key, progress_pct, ai_mode, stages, logs, quality_report, error_message, retry_count, created_at, updated_at, completed_at').eq('id', jid).maybeSingle();
+        if (!jRow) return sendJson(res, 404, { error: 'Job introuvable.' });
+        return sendJson(res, 200, { ok: true, job: mapImportJobRow(jRow, false) });
+      }
+
+      // POST /api/admin/jobs/:jobId/step — Exécuter l'étape suivante (ou réessayer une étape précise)
+      const jobStepMatch = path.match(/^\/api\/admin\/jobs\/([a-zA-Z0-9_-]+)\/step$/);
+      if (method === 'POST' && jobStepMatch) {
+        const jid = jobStepMatch[1];
+        const body = await readJsonBody(req);
+        const { data: jRow } = await admin.from('course_import_jobs').select('*').eq('id', jid).maybeSingle();
+        if (!jRow) return sendJson(res, 404, { error: 'Job introuvable.' });
+        const { data: cRow } = await admin.from('courses').select('*').eq('id', jRow.course_id).maybeSingle();
+        if (!cRow) return sendJson(res, 404, { error: 'Cours introuvable.' });
+
+        const jobObj = mapImportJobRow(jRow, true);
+        const course = mapCourseRow(cRow);
+        const targetStage = body?.retryStage ? Number(body.retryStage) : jobObj.currentStage;
+        const isRetry = !!body?.retryStage || jobObj.status === 'failed';
+
+        const [{ data: aiRow }, { data: allRows }] = await Promise.all([
+          admin.from('site_meta').select('value').eq('key', 'aiConfig').maybeSingle(),
+          targetStage === 4 ? admin.from('courses').select('id, code, title, short_title, source_files, ppt_import') : Promise.resolve({ data: [] })
+        ]);
+
+        const stepOut = await executeImportJobStage({
+          job: jobObj,
+          course,
+          existingCourses: (allRows || []).map(mapCourseRow),
+          downloadFilesFn: downloadCourseFilesFromStorage,
+          siteMetaAiConfig: aiRow?.value,
+          targetStage
+        });
+
+        let savedCourse = null;
+        let finalFlashcards = null;
+        let finalQcms = null;
+        if (stepOut.completed && stepOut.artifacts?.finalPayload) {
+          const fp = stepOut.artifacts.finalPayload;
+          savedCourse = await commitFinalJobPayload(course.id, course, fp);
+          finalFlashcards = fp.flashcards;
+          finalQcms = fp.qcms;
+          // Retirer le doublon finalPayload des artifacts persistés pour garder la ligne DB compacte
+          delete stepOut.artifacts.finalPayload;
+        }
+
+        const now = new Date().toISOString();
+        const { data: updatedJobRow } = await admin.from('course_import_jobs').update({
+          status: stepOut.status,
+          current_stage: stepOut.currentStage,
+          current_stage_key: stepOut.currentStageKey,
+          progress_pct: stepOut.progressPct,
+          ai_mode: stepOut.aiMode,
+          stages: stepOut.stages,
+          logs: stepOut.logs,
+          artifacts: stepOut.artifacts,
+          quality_report: stepOut.qualityReport,
+          error_message: stepOut.errorMessage,
+          retry_count: isRetry ? (jobObj.retryCount + 1) : jobObj.retryCount,
+          updated_at: now,
+          completed_at: stepOut.completed ? now : null
+        }).eq('id', jid).select('*').single();
+
+        return sendJson(res, stepOut.ok ? 200 : 400, {
+          ok: stepOut.ok,
+          completed: stepOut.completed,
+          error: stepOut.ok ? undefined : stepOut.errorMessage,
+          job: mapImportJobRow(updatedJobRow, false),
+          course: savedCourse,
+          flashcards: finalFlashcards,
+          qcms: finalQcms
+        });
+      }
+
+      // POST /api/admin/courses/:id/lessons/:lessonId/regenerate — Régénérer UNE leçon/section
+      const regenMatch = path.match(/^\/api\/admin\/courses\/([a-zA-Z0-9_-]+)\/lessons\/([a-zA-Z0-9_.-]+)\/regenerate$/);
+      if (method === 'POST' && regenMatch) {
+        const [, cid, lid] = regenMatch;
+        const [{ data: cRow }, { data: fcs }, { data: qs }, { data: latestJob }, { data: aiRow }] = await Promise.all([
+          admin.from('courses').select('*').eq('id', cid).maybeSingle(),
+          admin.from('flashcards').select('*').eq('course_id', cid),
+          admin.from('qcms').select('*').eq('course_id', cid),
+          admin.from('course_import_jobs').select('artifacts').eq('course_id', cid).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+          admin.from('site_meta').select('value').eq('key', 'aiConfig').maybeSingle()
+        ]);
+        if (!cRow) return sendJson(res, 404, { error: 'Cours introuvable.' });
+
+        await createCloudBackup(admin, `pre_regen_${lid}`);
+        const course = mapCourseRow(cRow);
+        const regRes = await regenerateSingleLesson({
+          course,
+          lessonId: lid,
+          existingFlashcards: (fcs || []).map(mapFlashcardRow),
+          existingQcms: (qs || []).map(mapQcmRow),
+          latestJobArtifacts: latestJob?.artifacts || {},
+          siteMetaAiConfig: aiRow?.value
+        });
+        if (!regRes.ok) return sendJson(res, 400, { error: regRes.error });
+
+        const now = new Date().toISOString();
+        const nextAi = { ...(course.aiExtraction || {}), qualityReport: regRes.qualityReport };
+        const { data: upCourse } = await admin.from('courses').update({
+          lessons: regRes.lessons,
+          ai_extraction: nextAi,
+          metadata: { ...(course.metadata || {}), lastQualityReport: regRes.qualityReport },
+          updated_at: now
+        }).eq('id', cid).select('*').single();
+
+        await admin.from('flashcards').delete().eq('course_id', cid);
+        if (regRes.flashcards.length) {
+          await admin.from('flashcards').insert(regRes.flashcards.map((f) => flashcardToDbRow(f, cid)));
+        }
+        await admin.from('qcms').delete().eq('course_id', cid);
+        if (regRes.qcms.length) {
+          await admin.from('qcms').insert(regRes.qcms.map((q) => qcmToDbRow(q, cid)));
+        }
+
+        return sendJson(res, 200, {
+          ok: true,
+          course: mapCourseRow(upCourse),
+          lesson: regRes.lesson,
+          flashcards: regRes.flashcards,
+          qcms: regRes.qcms,
+          qualityReport: regRes.qualityReport
+        });
+      }
+
+      // POST /api/admin/courses/:id/quality-check — Exécuter l'audit qualité 9 points à la demande
+      const qcMatch = path.match(/^\/api\/admin\/courses\/([a-zA-Z0-9_-]+)\/quality-check$/);
+      if (method === 'POST' && qcMatch) {
+        const cid = qcMatch[1];
+        const body = await readJsonBody(req);
+        const [{ data: cRow }, { data: fcs }, { data: qs }] = await Promise.all([
+          admin.from('courses').select('*').eq('id', cid).maybeSingle(),
+          admin.from('flashcards').select('*').eq('course_id', cid),
+          admin.from('qcms').select('*').eq('course_id', cid)
+        ]);
+        if (!cRow) return sendJson(res, 404, { error: 'Cours introuvable.' });
+        const targetCourse = body?.course || mapCourseRow(cRow);
+        const targetFc = Array.isArray(body?.flashcards) ? body.flashcards : (fcs || []).map(mapFlashcardRow);
+        const targetQ = Array.isArray(body?.qcms) ? body.qcms : (qs || []).map(mapQcmRow);
+        const qualityReport = runQualityAudit(targetCourse, targetFc, targetQ);
+
+        await admin.from('courses').update({
+          ai_extraction: { ...(cRow.ai_extraction || {}), qualityReport },
+          metadata: { ...(cRow.metadata || {}), lastQualityReport: qualityReport }
+        }).eq('id', cid);
+
+        return sendJson(res, 200, { ok: true, qualityReport });
+      }
+
+      // POST /api/admin/courses/:id/approve — Approuver (et publier optionnellement) après contrôle qualité
+      const approveMatch = path.match(/^\/api\/admin\/courses\/([a-zA-Z0-9_-]+)\/approve$/);
+      if (method === 'POST' && approveMatch) {
+        const cid = approveMatch[1];
+        const body = await readJsonBody(req);
+        const [{ data: cRow }, { data: fcs }, { data: qs }] = await Promise.all([
+          admin.from('courses').select('*').eq('id', cid).maybeSingle(),
+          admin.from('flashcards').select('*').eq('course_id', cid),
+          admin.from('qcms').select('*').eq('course_id', cid)
+        ]);
+        if (!cRow) return sendJson(res, 404, { error: 'Cours introuvable.' });
+
+        const course = mapCourseRow(cRow);
+        const qualityReport = runQualityAudit(course, (fcs || []).map(mapFlashcardRow), (qs || []).map(mapQcmRow));
+        if (qualityReport.blockingCount > 0 && !body?.forceOverride) {
+          return sendJson(res, 400, {
+            error: `Publication bloquée : ${qualityReport.blockingCount} erreur(s) qualité bloquante(s) à corriger avant approbation.`,
+            qualityReport
+          });
+        }
+
+        await createCloudBackup(admin, `approve_${cid}`);
+        const now = new Date().toISOString();
+        const shouldPublish = body?.publish !== false;
+        const cleanLessons = (course.lessons || []).map((l) => ({ ...l, needsReview: false }));
+        const nextMeta = {
+          ...(course.metadata || {}),
+          lastQualityReport: qualityReport,
+          approved: true,
+          approvedAt: now,
+          approvedBy: user.email
+        };
+        const patch = {
+          lessons: cleanLessons,
+          status: shouldPublish ? 'published' : course.status,
+          published_at: shouldPublish ? (course.publishedAt || now) : course.publishedAt,
+          ai_extraction: { ...(course.aiExtraction || {}), qualityReport, status: 'approved' },
+          metadata: nextMeta,
+          updated_at: now
+        };
+        if (course.pptImport) {
+          patch.ppt_import = { ...course.pptImport, importStatus: 'approved' };
+        }
+        const { data: upCourse } = await admin.from('courses').update(patch).eq('id', cid).select('*').single();
+        await admin.from('flashcards').update({ needs_review: false }).eq('course_id', cid);
+        await admin.from('qcms').update({ needs_review: false }).eq('course_id', cid);
+
+        return sendJson(res, 200, { ok: true, course: mapCourseRow(upCourse), qualityReport });
+      }
+
+      // ANALYZE COURSE (Compatibilité rétroactive — exécute l'intégralité du pipeline universel 11 étapes)
       const analyzeMatch = path.match(/^\/api\/admin\/courses\/([a-zA-Z0-9_-]+)\/analyze$/);
       if (method === 'POST' && analyzeMatch) {
         const cid = analyzeMatch[1];
         const { data: cRow } = await admin.from('courses').select('*').eq('id', cid).maybeSingle();
         if (!cRow) return sendJson(res, 404, { error: 'Cours introuvable.' });
         const course = mapCourseRow(cRow);
-        const atts = course.attachments || [];
-        const pptAtt = atts.find((a) => a.kind === 'primary_ppt' || /\.(pptx|ppt)$/i.test(a.originalName || ''));
-        const pdfAtt = atts.find((a) => a.kind === 'primary_pdf' || /\.pdf$/i.test(a.originalName || ''));
-        const chosen = pptAtt || pdfAtt;
-        if (!chosen) return sendJson(res, 400, { error: 'Aucun fichier PDF ou PowerPoint téléversé pour ce cours.' });
 
         await createCloudBackup(admin, `pre_analyze_${cid}`);
-        const { data: blob, error: dlErr } = await admin.storage.from(STORAGE_BUCKET).download(chosen.storagePath || `${cid}/${chosen.storedName}`);
-        if (dlErr || !blob) return sendJson(res, 404, { error: 'Fichier introuvable dans Supabase Storage.' });
-        const buf = Buffer.from(await blob.arrayBuffer());
+        const [{ data: aiRow }, { data: allRows }] = await Promise.all([
+          admin.from('site_meta').select('value').eq('key', 'aiConfig').maybeSingle(),
+          admin.from('courses').select('id, code, title, short_title, source_files, ppt_import')
+        ]);
 
-        let result;
-        if (pptAtt) {
-          const { data: allRows } = await admin.from('courses').select('*');
-          result = await analyzePptxBuffer(buf, course, chosen.originalName, (allRows || []).map(mapCourseRow));
-        } else {
-          result = await analyzePdfBuffer(buf, course, chosen.originalName);
-        }
-        if (!result.ok) return sendJson(res, 400, { error: result.error });
-
-        const patch = {
-          lessons: result.lessons,
-          ai_extraction: result.aiExtraction,
-          updated_at: new Date().toISOString()
+        const jobId = makeId('JOB');
+        let jobState = {
+          id: jobId,
+          courseId: cid,
+          status: 'running',
+          currentStage: 1,
+          stages: createInitialStages(),
+          logs: [],
+          artifacts: {},
+          qualityReport: {}
         };
-        if (result.pptImport) patch.ppt_import = result.pptImport;
-        const { data: updatedCourse } = await admin.from('courses').update(patch).eq('id', cid).select('*').single();
-
-        await admin.from('flashcards').delete().eq('course_id', cid);
-        if (result.flashcards.length) {
-          await admin.from('flashcards').insert(result.flashcards.map((f) => flashcardToDbRow(f, cid)));
+        const existingMapped = (allRows || []).map(mapCourseRow);
+        for (let st = 1; st <= 11; st++) {
+          const out = await executeImportJobStage({
+            job: jobState,
+            course,
+            existingCourses: existingMapped,
+            downloadFilesFn: downloadCourseFilesFromStorage,
+            siteMetaAiConfig: aiRow?.value,
+            targetStage: st
+          });
+          jobState = { ...jobState, ...out };
+          if (!out.ok) return sendJson(res, 400, { error: out.errorMessage });
         }
-        await admin.from('qcms').delete().eq('course_id', cid);
-        if (result.qcms.length) {
-          await admin.from('qcms').insert(result.qcms.map((q) => qcmToDbRow(q, cid)));
-        }
 
+        const fp = jobState.artifacts.finalPayload;
+        const savedCourse = await commitFinalJobPayload(cid, course, fp);
         return sendJson(res, 200, {
           ok: true,
-          course: mapCourseRow(updatedCourse),
-          flashcards: result.flashcards,
-          qcms: result.qcms,
-          aiExtraction: result.aiExtraction,
-          pptImport: result.pptImport
+          course: savedCourse,
+          flashcards: fp.flashcards,
+          qcms: fp.qcms,
+          aiExtraction: fp.aiExtraction,
+          pptImport: fp.pptImport,
+          qualityReport: fp.qualityReport
         });
       }
 
@@ -878,12 +1219,13 @@ export default async function handler(req, res) {
       if (method === 'POST' && path === '/api/admin/security/ai-config') {
         const body = await readJsonBody(req);
         const provider = String(body.provider || 'local').trim();
+        const srvAi = getServerAiConfig({ provider });
         await admin.from('site_meta').upsert({
           key: 'aiConfig',
-          value: { provider, configured: !!process.env.AI_API_KEY },
+          value: { provider, configured: srvAi.enabled, model: srvAi.model },
           updated_at: new Date().toISOString()
         });
-        return sendJson(res, 200, { ok: true, aiConfig: { provider, configured: !!process.env.AI_API_KEY } });
+        return sendJson(res, 200, { ok: true, aiConfig: { provider: srvAi.provider, model: srvAi.model, configured: srvAi.enabled, envControlled: true } });
       }
 
       return sendJson(res, 404, { error: `Route admin inconnue : ${method} ${path}` });

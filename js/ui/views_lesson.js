@@ -1,29 +1,19 @@
 /* ==========================================================================
-   Vues Cours & Studio de Leçon (Feuille de route + 5 Étapes A → B → C → D → E)
+   Vues Cours & Studio de Leçon — Parcours Pédagogique Unifié (Global MedStudy)
+   S'adapte dynamiquement à TOUS les cours (existants & futurs PDF/PowerPoint),
+   toutes les leçons, toutes les phases et toutes les étapes individuelles.
    ========================================================================== */
 window.EpiViewsLesson = (function () {
   const esc = (s) => window.EpiUI.esc(s);
   const asArr = (v) => window.EpiUI.asArr(v);
   const icon = (n, s) => window.EpiIcons.get(n, s);
 
-  const FC_TYPE_LABELS = {
-    definition: 'Définition',
-    cloze: 'Compléter la phrase',
-    list: 'Liste / Énumération',
-    difference: 'Expliquer la différence',
-    formula: 'Formule / Seuil clé',
-    short_answer: 'Réponse courte'
-  };
-
   function getMiniTestQuestions(course, lesson, catalog) {
-    const src = catalog || window.EpiData;
-    const allQ = asArr(src.qcms);
-    const own = allQ.filter(q => q.lessonId === lesson.id);
-    if (own.length >= 4) return own.slice(0, 5);
-    const extras = allQ
-      .filter(q => q.courseId === course.id && q.lessonId !== lesson.id)
-      .sort((a, b) => (b.isHard ? 1 : 0) - (a.isHard ? 1 : 0));
-    return own.concat(extras.slice(0, Math.max(0, 4 - own.length)));
+    return window.EpiJourney.getMiniTestQuestions(course, lesson, catalog);
+  }
+
+  function arraysEqualSet(a, b) {
+    return window.EpiJourney.arraysEqualSet(a, b);
   }
 
   function renderPreviewBanner(course) {
@@ -45,70 +35,107 @@ window.EpiViewsLesson = (function () {
       </div>`;
   }
 
+  // ==================== VUE FEUILLE DE ROUTE D'UN COURS ====================
   function renderCourseOverview(profile, courseId, opts) {
     const o = opts || {};
     const catalog = o.catalog || window.EpiData;
     const isPreview = !!o.isPreview;
     const course = asArr(catalog.courses).find(c => c.id === courseId);
     if (!course) return `<div class="card empty-state">Cours introuvable.</div>`;
-    const st = window.EpiPlanner.getCourseStats(profile, course);
-    const lessonsArr = asArr(course.lessons);
-    const nextTarget = lessonsArr.find(l => !(profile.lessons[l.id] && profile.lessons[l.id].mastered)) || lessonsArr[0];
-    const openAction = isPreview ? 'admin-preview-lesson' : 'go-lesson';
 
-    const roadmapHtml = lessonsArr.map((lesson, idx) => {
+    const st = window.EpiPlanner.getCourseStats(profile, course);
+    const cj = window.EpiJourney.getCourseJourney(profile, course, { catalog });
+    const nextLj = cj.nextLessonJourney;
+    const openAction = isPreview ? 'admin-preview-lesson' : 'go-lesson';
+    const nextTargetPhase = (nextLj && nextLj.nextPhase && nextLj.nextPhase.key) || 'A';
+    const nextTargetSubStep = (nextLj && nextLj.nextStep && nextLj.nextStep.id) || '';
+
+    const roadmapHtml = cj.lessons.map((lj) => {
+      const lesson = lj.lesson;
       const lRec = profile.lessons[lesson.id];
       const m = window.EpiSRS.getLessonMastery(profile, lesson);
       const srs = profile.lessonSrs[lesson.id];
       const fcCount = asArr(catalog.flashcards).filter(f => f.lessonId === lesson.id).length;
       const qcmCount = asArr(catalog.qcms).filter(q => q.lessonId === lesson.id).length;
       const isUpdated = window.EpiStorage.isLessonFlaggedUpdated(profile, lesson);
+      const isNext = nextLj && nextLj.id === lesson.id && !lj.isCompleted;
+      const targetPhaseKey = (lj.nextPhase && lj.nextPhase.key) || 'A';
+      const targetSubStep = (lj.nextStep && lj.nextStep.id) || '';
 
-      let stateLabel = 'Non commencée';
-      let stateCls = 'badge-neutral';
-      if (lRec && lRec.mastered) { stateLabel = 'Maîtrisée ✅'; stateCls = 'badge-green'; }
-      else if (lRec && lRec.studied) { stateLabel = 'Étudiée (à maîtriser)'; stateCls = 'badge-orange'; }
-      else if (lRec && lRec.status === 'in_progress') { stateLabel = 'En cours'; stateCls = 'badge-medium'; }
+      let ctaText = 'Commencer';
+      if (isPreview) ctaText = 'Prévisualiser';
+      else if (isUpdated) ctaText = 'Revoir la MAJ';
+      else if (lj.isCompleted) ctaText = 'Réviser';
+      else if (lj.completedSteps > 0 || lj.status === 'in_progress') ctaText = 'Continuer';
+
+      const phasePillsHtml = lj.phases.map(p => {
+        const pCls = p.isCompleted ? 'done' : (p.completedCount > 0 ? 'progress' : 'idle');
+        const pIcon = p.isCompleted ? 'checkCircle' : (p.completedCount > 0 ? 'disc' : 'circle');
+        return `
+          <button type="button" class="j-roadmap-phase-pill ${pCls}"
+            data-action="${openAction}" data-course="${esc(course.id)}" data-lesson="${esc(lesson.id)}" data-step="${esc(p.key)}"
+            title="${esc(p.name)} : ${esc(p.progressText)}">
+            ${icon(pIcon, 12)}
+            <span>${esc(p.shortName)}</span>
+            <strong>${p.completedCount}/${p.totalCount}</strong>
+          </button>`;
+      }).join('');
 
       return `
-        <div class="roadmap-item ${isUpdated ? 'roadmap-updated' : ''}">
-          <div style="display:flex;align-items:flex-start;gap:14px;min-width:0;flex:1;">
-            <div style="width:34px;height:34px;border-radius:10px;background:${lRec && lRec.mastered ? '#059669' : '#eff6ff'};color:${lRec && lRec.mastered ? '#fff' : '#1d4ed8'};font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-              ${lRec && lRec.mastered ? '✓' : idx + 1}
+        <article class="j-roadmap-card ${isUpdated ? 'roadmap-updated' : ''} ${lj.isCompleted ? 'is-done' : (isNext ? 'is-next' : '')}">
+          <div class="j-roadmap-top">
+            <div class="j-roadmap-left">
+              <div class="j-step-num ${lj.isCompleted ? 'done' : (isNext ? 'current' : '')}">
+                ${lj.isCompleted ? icon('check', 15) : lj.index}
+              </div>
+              <div style="min-width:0;flex:1;">
+                <div class="j-roadmap-badges">
+                  <span class="j-step-id">Leçon ${lj.index}/${cj.totalLessons} · ${esc(lj.identifier)}</span>
+                  ${window.EpiJourneyUI.renderStatusBadge(lj.status)}
+                  ${window.EpiUI.masteryBadge(m)}
+                  ${isNext ? `<span class="j-next-tag">${icon('arrowRight', 12)} Prochaine leçon recommandée</span>` : ''}
+                  ${isPreview && lesson.hasManualFlags ? `<span class="badge badge-vigilance">Relecture recommandée</span>` : ''}
+                  ${isUpdated ? `<span class="badge badge-orange">🔄 Contenu mis à jour</span>` : ''}
+                  ${course.bmCount > 0 || lesson.bmCount > 0 ? window.EpiUI.priorityBadge(lesson.priority, course.vigilance2026 && lesson.bmCount === 0) : ''}
+                </div>
+                <h3 class="j-roadmap-title">${esc(lesson.title)}</h3>
+                <div class="j-roadmap-meta">
+                  <span>${esc(lesson.sourceRef || 'Support de cours')}</span>
+                  <span>· ~${lesson.durationMin || 10} min</span>
+                  ${lesson.bmCount > 0 ? `<span>· <strong>${lesson.bmCount}</strong> QCM BM</span>` : ''}
+                  <span>· ${fcCount} flashcards · ${qcmCount} QCM</span>
+                  ${lRec && lRec.miniTestBest !== null ? `<span>· Mini-test : <strong>${lRec.miniTestBest} %</strong></span>` : ''}
+                  ${srs && srs.nextReviewAt ? `<span>· Révision SRS : <strong>${window.EpiUI.formatDueLabel(window.EpiSRS.daysUntil(srs.nextReviewAt))}</strong></span>` : ''}
+                </div>
+              </div>
             </div>
-            <div style="min-width:0;flex:1;">
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
-                <strong style="font-size:15px;color:#0f1e3a;">${esc(lesson.title)}</strong>
-                <span class="badge ${stateCls}">${stateLabel}</span>
-                ${lesson.slideRange ? `<span class="badge badge-neutral">${esc(lesson.slideRange)}</span>` : ''}
-                ${isPreview && lesson.hasManualFlags ? `<span class="badge badge-vigilance">Relecture recommandée</span>` : ''}
-                ${isUpdated ? `<span class="badge badge-orange">🔄 Contenu mis à jour — révision conseillée</span>` : ''}
-                ${course.bmCount > 0 || lesson.bmCount > 0 ? window.EpiUI.priorityBadge(lesson.priority, course.vigilance2026 && lesson.bmCount === 0) : ''}
+            <div class="j-roadmap-cta">
+              <div class="j-roadmap-pct">
+                <strong>${lj.pct} %</strong>
+                <span>${lj.completedPhases}/${lj.totalPhases} phases</span>
               </div>
-              <div style="font-size:13px;color:#64748b;display:flex;flex-wrap:wrap;gap:12px;">
-                <span>${esc(lesson.sourceRef || 'Support de cours')}</span>
-                <span>· ~${lesson.durationMin || 10} min</span>
-                ${lesson.bmCount > 0 ? `<span>· <strong>${lesson.bmCount}</strong> QCM BM</span>` : ''}
-                <span>· ${fcCount} flashcards · ${qcmCount} QCM</span>
-                ${lRec && lRec.miniTestBest !== null ? `<span>· Meilleur mini-test : <strong>${lRec.miniTestBest} %</strong></span>` : ''}
-                ${srs && srs.nextReviewAt ? `<span>· Prochaine révision : <strong>${window.EpiUI.formatDueLabel(window.EpiSRS.daysUntil(srs.nextReviewAt))}</strong></span>` : ''}
-              </div>
+              <button type="button" class="btn ${lj.isCompleted ? 'btn-secondary' : 'btn-primary'} btn-sm"
+                data-action="${openAction}" data-course="${esc(course.id)}" data-lesson="${esc(lesson.id)}" data-step="${esc(targetPhaseKey)}" data-substep="${esc(targetSubStep)}">
+                ${esc(ctaText)} ${icon('arrowRight', 14)}
+              </button>
             </div>
           </div>
-          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
-            ${window.EpiUI.masteryBadge(m)}
-            <button class="btn btn-primary btn-sm" data-action="${openAction}" data-course="${esc(course.id)}" data-lesson="${esc(lesson.id)}" data-step="A">
-              ${isPreview ? 'Prévisualiser' : (isUpdated ? 'Revoir MAJ' : (lRec && lRec.mastered ? 'Réviser' : (lRec && lRec.status === 'in_progress' ? 'Continuer' : 'Étudier')))}
-            </button>
+
+          <div class="progress-bar j-mini-bar" style="margin:12px 0 10px;">
+            <div class="progress-fill ${lj.isCompleted ? 'green' : ''}" style="width:${lj.pct}%"></div>
           </div>
-        </div>`;
+
+          <div class="j-roadmap-phases-row" aria-label="Phases de la leçon ${esc(lesson.title)}">
+            ${phasePillsHtml}
+          </div>
+        </article>`;
     }).join('');
 
     const mod = asArr(catalog.modules).find(m => m.id === course.moduleId);
     const attachments = asArr(course.attachments);
     const attachmentsHtml = attachments.length > 0 ? `
-      <div style="margin-top:14px;padding-top:14px;border-top:1px solid #e2e8f0;">
-        <div style="font-size:12.5px;font-weight:700;color:#475569;margin-bottom:8px;">Supports originaux joints (${attachments.length}) :</div>
+      <div class="j-attachments-strip">
+        <div class="j-attachments-label">Supports originaux joints (${attachments.length}) :</div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;">
           ${attachments.map(att => {
             const unit = att.kind === 'primary_ppt' ? 'diapos' : 'p.';
@@ -132,52 +159,66 @@ window.EpiViewsLesson = (function () {
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
               <span class="course-code-pill">${esc(course.code)}</span>
               ${mod && mod.subject ? `<span class="badge badge-neutral">${esc(mod.subject)}</span>` : ''}
+              ${course.academicYear ? `<span class="badge badge-neutral">${esc(course.academicYear)}</span>` : ''}
+              ${window.EpiJourneyUI.renderStatusBadge(cj.status)}
               ${course.pptImport && course.pptImport.isPowerPoint ? `<span class="badge badge-medium">PowerPoint · ${course.pptImport.slidesProcessed} diapos</span>` : ''}
               ${course.bmCount > 0 || course.vigilance2026 ? window.EpiUI.priorityBadge(course.priority, course.vigilance2026) : ''}
               ${course.bmCount > 0 ? `<span class="badge badge-bm">${course.bmCount} QCM dans la BM</span>` : ''}
             </div>
-            <h1 style="margin:0 0 6px;font-size:22px;color:#0f1e3a;">${esc(course.title)}</h1>
-            <p style="margin:0 0 8px;font-size:14px;color:#475569;">${esc(course.summary || '')}</p>
-            <div style="font-size:12.5px;color:#64748b;">
+            <h1 class="j-course-heading">${esc(course.title)}</h1>
+            <p class="j-course-summary">${esc(course.summary || '')}</p>
+            <div class="j-course-meta">
               <strong>Enseignant :</strong> ${esc(course.professor || 'Faculté de Médecine')}
               ${asArr(course.sourceFiles).length ? ` · <strong>Source(s) :</strong> ${esc(asArr(course.sourceFiles).join(' ; '))}` : ''}
               ${course.bmSharedNote ? `<br><strong>Note BM :</strong> ${esc(course.bmSharedNote)}` : ''}
             </div>
           </div>
           <div style="display:flex;flex-direction:column;align-items:center;gap:10px;">
-            ${window.EpiIcons.progressRing(st.masteryPct, 82, st.masteryPct === 100 ? '#059669' : '#2563eb')}
-            ${nextTarget ? `<button class="btn btn-primary" data-action="${openAction}" data-course="${esc(course.id)}" data-lesson="${esc(nextTarget.id)}" data-step="A">
-              ${isPreview ? 'Prévisualiser la 1ère leçon →' : (st.completed === st.total ? 'Réviser ce cours' : 'Lancer la prochaine leçon →')}
+            ${window.EpiIcons.progressRing(cj.overallPct, 86, cj.overallPct === 100 ? '#059669' : '#2563eb')}
+            ${nextLj ? `<button type="button" class="btn btn-primary" data-action="${openAction}" data-course="${esc(course.id)}" data-lesson="${esc(nextLj.id)}" data-step="${esc(nextTargetPhase)}" data-substep="${esc(nextTargetSubStep)}">
+              ${isPreview ? 'Prévisualiser la 1ère leçon →' : (cj.completedLessons === cj.totalLessons ? 'Réviser ce cours →' : (cj.completedSteps > 0 ? 'Continuer mon parcours →' : 'Commencer le cours →'))}
             </button>` : ''}
           </div>
         </div>
+
+        <div class="j-guidance-banner ${cj.status === 'completed' ? 'j-guide-success' : 'j-guide-info'}" style="margin-top:16px;">
+          <div class="j-guidance-icon">${icon(cj.status === 'completed' ? 'checkCircle' : 'target', 18)}</div>
+          <div class="j-guidance-copy">
+            <strong>Parcours du cours : ${cj.completedLessons}/${cj.totalLessons} leçons · ${cj.completedPhases}/${cj.totalPhases} phases · ${cj.completedSteps}/${cj.totalSteps} étapes (${cj.overallPct} %)</strong>
+            <span>${esc(cj.guidance)}</span>
+          </div>
+        </div>
+
         ${attachmentsHtml}
 
-        <div class="kpi-grid" style="margin:18px 0 0;grid-template-columns:repeat(4,1fr);">
-          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;">
-            <div style="font-size:12px;color:#64748b;font-weight:600;">Leçons terminées</div>
-            <div style="font-size:20px;font-weight:800;color:#059669;">${st.completed}</div>
+        <div class="kpi-grid j-course-kpis">
+          <div class="j-mini-kpi">
+            <span>Leçons terminées</span>
+            <strong style="color:var(--green);">${cj.completedLessons} / ${cj.totalLessons}</strong>
           </div>
-          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;">
-            <div style="font-size:12px;color:#64748b;font-weight:600;">Leçons restantes</div>
-            <div style="font-size:20px;font-weight:800;color:#0f1e3a;">${st.remaining}</div>
+          <div class="j-mini-kpi">
+            <span>Phases validées</span>
+            <strong style="color:var(--primary);">${cj.completedPhases} / ${cj.totalPhases}</strong>
           </div>
-          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;">
-            <div style="font-size:12px;color:#64748b;font-weight:600;">Sujets bien maîtrisés</div>
-            <div style="font-size:20px;font-weight:800;color:#059669;">${st.green}</div>
+          <div class="j-mini-kpi">
+            <span>Étapes complétées</span>
+            <strong>${cj.completedSteps} / ${cj.totalSteps}</strong>
           </div>
-          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;">
-            <div style="font-size:12px;color:#64748b;font-weight:600;">Sujets à réviser</div>
-            <div style="font-size:20px;font-weight:800;color:${st.needsRevision > 0 ? '#dc2626' : '#0f1e3a'};">${st.needsRevision}</div>
+          <div class="j-mini-kpi">
+            <span>Maîtrisées (SRS ≥ 80 %)</span>
+            <strong style="color:${st.needsRevision > 0 ? 'var(--red)' : 'var(--green)'};">${st.completed} / ${st.total}${st.needsRevision > 0 ? ` (${st.needsRevision} à réviser)` : ''}</strong>
           </div>
         </div>
       </div>
 
-      <h2 class="section-heading" style="margin-top:6px;">Feuille de route du cours (${lessonsArr.length} leçons)</h2>
-      <div class="roadmap-list">${roadmapHtml || '<div class="card empty-state">Aucune leçon disponible dans ce cours pour le moment.</div>'}</div>
+      <h2 class="section-heading" style="margin-top:6px;">
+        <span>Feuille de route du cours (${cj.totalLessons} leçon${cj.totalLessons > 1 ? 's' : ''} · ${cj.totalPhases} phases · ${cj.totalSteps} étapes)</span>
+      </h2>
+      <div class="j-roadmap-list">${roadmapHtml || '<div class="card empty-state">Aucune leçon disponible dans ce cours pour le moment.</div>'}</div>
     `;
   }
 
+  // ==================== STUDIO DE LEÇON UNIFIÉ (TOUTES PHASES & ÉTAPES) ====================
   function renderLessonStudio(profile, courseId, lessonId, activeStep, runtime, opts) {
     const o = opts || {};
     const catalog = o.catalog || window.EpiData;
@@ -188,47 +229,25 @@ window.EpiViewsLesson = (function () {
 
     const lRec = window.EpiStorage.ensureLessonRecord(profile, lesson.id);
     const mastery = window.EpiSRS.getLessonMastery(profile, lesson);
-    const lessonCards = asArr(catalog.flashcards).filter(f => f.lessonId === lesson.id);
-    const lessonQcms = asArr(catalog.qcms).filter(q => q.lessonId === lesson.id);
     const memEvidence = window.EpiSRS.hasCompletedMemorizationEvidence(profile, lesson);
 
-    const step = activeStep || 'A';
+    const cj = window.EpiJourney.getCourseJourney(profile, course, { catalog });
+    const lj = window.EpiJourney.getLessonJourney(profile, course, lesson, {
+      catalog,
+      runtime,
+      activePhaseKey: activeStep || 'A',
+      activeStepId: runtime.activeSubStepId || null
+    });
+
+    const activePhase = lj.activePhase;
+    const activePhaseIdx = lj.phases.findIndex(p => p.key === (activePhase && activePhase.key));
+    const prevPhase = activePhaseIdx > 0 ? lj.phases[activePhaseIdx - 1] : null;
+    const nextPhase = (activePhaseIdx >= 0 && activePhaseIdx < lj.phases.length - 1) ? lj.phases[activePhaseIdx + 1] : null;
+    const currentStep = lj.activeStep;
+
     const backAction = isPreview ? 'admin-preview-course' : 'go-course';
-    const switchLessonAction = isPreview ? 'admin-preview-lesson' : 'go-lesson';
-
-    const doneA = lRec.stepAVisited;
-    const doneB = lRec.memCheckedIds.length > 0 || lRec.memDeclaredAll;
-    const doneC = lessonCards.filter(c => profile.flashcards[c.id] && profile.flashcards[c.id].totalReviews > 0).length >= Math.min(2, lessonCards.length);
-    const doneD = lessonQcms.some(q => profile.qcms[q.id] && profile.qcms[q.id].attempts > 0);
-    const doneE = lRec.miniTestBest !== null && lRec.miniTestBest >= 80;
-
-    const stepsMeta = [
-      { key: 'A', letter: 'Étape A', name: 'Comprendre', done: doneA },
-      { key: 'B', letter: 'Étape B', name: 'À mémoriser', done: doneB },
-      { key: 'C', letter: 'Étape C', name: `Rappel actif (${lessonCards.length})`, done: doneC },
-      { key: 'D', letter: 'Étape D', name: `QCM (${lessonQcms.length})`, done: doneD },
-      { key: 'E', letter: 'Étape E', name: 'Mini-test (≥80%)', done: doneE }
-    ];
-
-    const stepperHtml = stepsMeta.map(s => `
-      <button type="button" class="step-tab ${step === s.key ? 'active' : ''} ${s.done ? 'done-step' : ''}" data-action="lesson-step" data-step="${s.key}">
-        <span class="step-letter">${s.letter} ${s.done ? '✓' : ''}</span>
-        <span class="step-name">${s.name}</span>
-      </button>`).join('');
-
-    let stepBody = '';
-    if (step === 'A') stepBody = renderStepA(lesson);
-    else if (step === 'B') stepBody = renderStepB(lesson, lRec);
-    else if (step === 'C') stepBody = renderStepC(profile, lesson, lessonCards, runtime);
-    else if (step === 'D') stepBody = renderStepD(lesson, lessonQcms, runtime);
-    else stepBody = renderStepE(profile, course, lesson, lRec, memEvidence, runtime, catalog);
-
-    const otherLessonsBtns = asArr(course.lessons).map((l, i) => `
-      <button type="button" class="time-pill ${l.id === lesson.id ? 'active' : ''}" data-action="${switchLessonAction}" data-course="${esc(course.id)}" data-lesson="${esc(l.id)}" data-step="A">
-        ${i + 1}. ${esc(l.slideRange || l.id)}
-      </button>`).join('');
-
     const isUpdated = window.EpiStorage.isLessonFlaggedUpdated(profile, lesson);
+
     const updateBannerHtml = isUpdated ? `
       <div class="alert alert-warning" style="align-items:center;justify-content:space-between;flex-wrap:wrap;">
         <div style="display:flex;align-items:flex-start;gap:10px;">
@@ -243,45 +262,71 @@ window.EpiViewsLesson = (function () {
         </button>
       </div>` : '';
 
+    let workspaceHtml = '';
+    if (activePhase && currentStep) {
+      if (activePhase.key === 'A') {
+        workspaceHtml = renderUnderstandStepWorkspace(lesson, activePhase, currentStep, prevPhase, nextPhase, lj.nextLesson, course.id, isPreview);
+      } else if (activePhase.key === 'B') {
+        workspaceHtml = renderMemorizeStepWorkspace(lesson, lRec, activePhase, currentStep, prevPhase, nextPhase, lj.nextLesson, course.id, isPreview);
+      } else if (activePhase.key === 'AR') {
+        workspaceHtml = renderActiveRecallStepWorkspace(lesson, activePhase, currentStep, runtime, prevPhase, nextPhase, lj.nextLesson, course.id, isPreview);
+      } else if (activePhase.key === 'C') {
+        workspaceHtml = renderFlashcardStepWorkspace(profile, lesson, activePhase, currentStep, runtime, prevPhase, nextPhase, lj.nextLesson, course.id, isPreview);
+      } else if (activePhase.key === 'D') {
+        workspaceHtml = renderQcmStepWorkspace(profile, lesson, activePhase, currentStep, runtime, prevPhase, nextPhase, lj.nextLesson, course.id, isPreview);
+      } else if (activePhase.key === 'E') {
+        workspaceHtml = renderMiniTestStepWorkspace(profile, course, lesson, lRec, memEvidence, activePhase, currentStep, runtime, catalog, prevPhase, lj.nextLesson, isPreview);
+      }
+    } else {
+      workspaceHtml = `<div class="card empty-state">Aucune activité disponible dans cette phase pour le moment.</div>`;
+    }
+
     return `
       ${isPreview ? renderPreviewBanner(course) : ''}
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+
+      <div class="j-top-breadcrumb">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-ghost btn-sm" data-action="${backAction}" data-course="${esc(course.id)}">${icon('arrowLeft', 16)} ${esc(course.code)} · ${esc(course.shortTitle)}</button>
-          <span style="color:#cbd5e1;">/</span>
-          <span style="font-size:13.5px;font-weight:600;color:#475569;">${esc(lesson.slideRange || ('Leçon ' + lesson.id))}</span>
+          <button class="btn btn-ghost btn-sm" data-action="${backAction}" data-course="${esc(course.id)}">
+            ${icon('arrowLeft', 16)} ${esc(course.code)} · ${esc(course.shortTitle || course.title)}
+          </button>
+          <span class="j-sep">/</span>
+          <span class="j-crumb-current">Leçon ${lj.lessonIndex}/${lj.totalLessonsInCourse} · ${esc(lesson.slideRange || lesson.id)}</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-          <div class="time-selector">${otherLessonsBtns}</div>
           ${!isPreview ? `<button type="button" class="btn ${lRec.studied ? 'btn-success' : 'btn-secondary'} btn-sm" data-action="toggle-studied" data-lesson="${esc(lesson.id)}">
             ${lRec.studied ? '✓ Marquée comme étudiée' : 'Marquer comme étudiée'}
           </button>` : ''}
         </div>
       </div>
 
+      ${window.EpiJourneyUI.renderCourseLessonsNavigator(cj, lesson.id, {
+        expanded: !!runtime.courseLessonsNavOpen,
+        isPreview
+      })}
+
       ${updateBannerHtml}
 
-      <div class="card" style="margin-bottom:16px;">
+      <div class="card j-lesson-hero">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;">
-          <div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
-              ${course.bmCount > 0 || lesson.bmCount > 0 ? window.EpiUI.priorityBadge(lesson.priority, course.vigilance2026 && lesson.bmCount === 0) : ''}
+          <div style="flex:1;min-width:240px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+              <span class="j-step-id">${esc(lesson.id)}</span>
+              ${window.EpiJourneyUI.renderStatusBadge(lj.status)}
               ${window.EpiUI.masteryBadge(mastery)}
+              ${course.bmCount > 0 || lesson.bmCount > 0 ? window.EpiUI.priorityBadge(lesson.priority, course.vigilance2026 && lesson.bmCount === 0) : ''}
               ${lesson.slideRange ? `<span class="badge badge-medium">${esc(lesson.slideRange)}</span>` : ''}
               ${lesson.bmCount > 0 ? `<span class="badge badge-bm">${lesson.bmCount} QCM BM</span>` : ''}
               ${lRec.mastered && mastery.level === 'green' ? `<span class="badge badge-green">🏆 Leçon maîtrisée</span>` : ''}
-              ${lRec.mastered && mastery.level !== 'green' ? `<span class="badge badge-orange">⚠️ Mini-test validé — révision recommandée</span>` : ''}
-              ${isUpdated ? `<span class="badge badge-orange">🔄 Mise à jour à revoir</span>` : ''}
             </div>
-            <h1 style="margin:0 0 4px;font-size:21px;color:#0f1e3a;">${esc(lesson.title)}</h1>
-            <div style="font-size:13px;color:#64748b;">
+            <h1 class="edu-h1 j-lesson-title">${esc(lesson.title)}</h1>
+            <div class="j-course-meta">
               <strong>Source :</strong> ${esc(lesson.sourceRef || 'Support de cours')} · <strong>Durée estimée :</strong> ~${lesson.durationMin || 10} min
               ${asArr(lesson.bmRefs).length ? ` · <strong>Réf. BM :</strong> ${esc(asArr(lesson.bmRefs).join(', '))}` : ''}
             </div>
           </div>
-          <div style="font-size:12.5px;color:#475569;text-align:right;">
-            <div>Critères de maîtrise :</div>
-            <div>${doneA ? '✅' : '○'} Étudiée · ${memEvidence ? '✅' : '○'} Rappel actif · ${doneE ? '✅' : '○'} Mini-test ≥ 80 %</div>
+          <div class="j-lesson-hero-stats">
+            <div class="j-hero-pct">${lj.overallPct} %</div>
+            <div class="j-hero-sub">${lj.completedPhases}/${lj.totalPhases} phases · ${lj.completedSteps}/${lj.totalSteps} étapes</div>
           </div>
         </div>
       </div>
@@ -289,193 +334,311 @@ window.EpiViewsLesson = (function () {
       ${lesson.bmWarning ? `<div class="alert alert-danger">${icon('alert', 19)}<div>${esc(lesson.bmWarning)}</div></div>` : ''}
       ${isPreview && lesson.hasManualFlags && lesson.extractionNote ? `<div class="alert alert-warning">${icon('alert', 18)}<div><strong>Point de vigilance import PowerPoint :</strong> ${esc(lesson.extractionNote)}</div></div>` : ''}
 
-      <div class="stepper-bar">${stepperHtml}</div>
+      ${window.EpiJourneyUI.renderLessonPhasesStepper(lj, activePhase ? activePhase.key : 'A')}
 
-      <div>${stepBody}</div>
+      ${activePhase ? window.EpiJourneyUI.renderPhaseOverviewAndSteps(activePhase, currentStep ? currentStep.id : null, nextPhase, {
+        collapsedSteps: !!runtime.phaseStepsCollapsed
+      }) : ''}
+
+      <div class="j-step-workspace-wrap">${workspaceHtml}</div>
     `;
   }
 
-  // ---- ÉTAPE A : COMPRENDRE ----
-  function renderStepA(lesson) {
-    const u = lesson.understand || { intro: '', sections: [], tables: [], darija: '', triad: { toUnderstand: [], toMemorize: [], toRecognizeInQcm: [] } };
-    const sectionsHtml = asArr(u.sections).map(sec => `
-      <div style="margin-top:18px;">
-        <h3 style="margin:0 0 8px;font-size:16.5px;color:#0f1e3a;">${esc(sec.heading)}</h3>
-        ${asArr(sec.paragraphs).map(p => `<p style="margin:0 0 8px;color:#334155;">${p}</p>`).join('')}
-        ${asArr(sec.bullets).length ? `<ul style="margin:6px 0 0;padding-left:20px;color:#1e293b;">${asArr(sec.bullets).map(b => `<li style="margin-bottom:6px;">${b}</li>`).join('')}</ul>` : ''}
-      </div>`).join('');
+  // ---- WORKSPACE PHASE A : À COMPRENDRE (TYPOGRAPHIE MÉDICALE & BLOCS SÉMANTIQUES) ----
+  function renderUnderstandStepWorkspace(lesson, phase, step, prevPhase, nextPhase, nextLesson, courseId, isPreview) {
+    const u = lesson.understand || {};
+    const fmt = window.EpiFormat;
+    let bodyHtml = '';
 
-    const tablesHtml = asArr(u.tables).map(tbl => `
-      <div style="margin-top:20px;">
-        <h4 style="margin:0 0 8px;font-size:14.5px;color:#0f1e3a;">${esc(tbl.title)}</h4>
-        <div class="data-table-wrap">
-          <table class="data-table">
-            <thead><tr>${asArr(tbl.headers).map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
-            <tbody>${asArr(tbl.rows).map(r => `<tr>${asArr(r).map((cell, ci) => `<td>${ci === 0 ? `<strong>${esc(cell)}</strong>` : esc(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
-          </table>
-        </div>
-      </div>`).join('');
-
-    const triad = u.triad || { toUnderstand: [], toMemorize: [], toRecognizeInQcm: [] };
-
-    return `
-      <div class="card">
-        <div class="card-header">
-          <div>
-            <h2 class="card-title">${icon('book', 19)} Étape A — Ce qu’il faut comprendre</h2>
-            <p class="card-subtitle">Explication claire fidèle au cours du professeur, structurée pour l’examen.</p>
-          </div>
-        </div>
-        <p style="font-size:15px;color:#1e293b;margin-top:0;">${esc(u.intro || '')}</p>
-        ${sectionsHtml}
-        ${tablesHtml}
-        ${u.darija ? `
+    if (step.kind === 'section' && step.section) {
+      const sec = step.section;
+      bodyHtml = `
+        ${step.number === 1 && u.intro ? (fmt ? fmt.renderIntroCallout(u.intro, lesson.sourceRef) : `<div class="j-intro-callout">${esc(u.intro)}</div>`) : ''}
+        ${fmt ? fmt.renderUnderstandSection(sec) : `
+          <div class="j-prose">
+            ${asArr(sec.paragraphs).map(p => `<p>${p}</p>`).join('')}
+            ${asArr(sec.bullets).length ? `<ul>${asArr(sec.bullets).map(b => `<li>${b}</li>`).join('')}</ul>` : ''}
+          </div>`}`;
+    } else if (step.kind === 'tables') {
+      bodyHtml = asArr(step.tables).map((tbl, ti) => fmt
+        ? fmt.renderTableCard(tbl, ti)
+        : `<div style="margin-bottom:18px;"><h4 class="edu-h4">${esc(tbl.title)}</h4></div>`).join('');
+    } else if (step.kind === 'synthesis') {
+      const triad = step.triad || {};
+      const fmtItem = (t) => (fmt ? fmt.enhanceInlineText(t) : esc(t));
+      bodyHtml = `
+        ${step.darija ? `
           <div class="darija-box">
             <div class="darija-box-title">${icon('sparkle', 15)} Explication simplifiée en Darija algérienne (باش تفهم بالخف)</div>
-            <p>${u.darija}</p>
+            <p>${fmt ? fmt.enhanceInlineText(step.darija, { skipLeadTerm: true }) : step.darija}</p>
           </div>` : ''}
-
-        <div class="triad-grid">
-          <div class="triad-card understand">
-            <h4>💡 Ce que tu dois comprendre</h4>
-            <ul>${asArr(triad.toUnderstand).map(i => `<li>${esc(i)}</li>`).join('')}</ul>
-          </div>
-          <div class="triad-card memorize">
-            <h4>📌 Ce que tu dois mémoriser</h4>
-            <ul>${asArr(triad.toMemorize).map(i => `<li>${esc(i)}</li>`).join('')}</ul>
-          </div>
-          <div class="triad-card qcm">
-            <h4>🎯 Ce qu’il faut reconnaître en QCM</h4>
-            <ul>${asArr(triad.toRecognizeInQcm).map(i => `<li>${esc(i)}</li>`).join('')}</ul>
-          </div>
+        <div class="edu-summary-head">
+          <h3 class="edu-h3" style="margin:0;">Synthèse & Points essentiels à retenir</h3>
+          <span class="edu-ref-pill">${esc(lesson.sourceRef || lesson.id)}</span>
         </div>
-
-        <div style="margin-top:22px;display:flex;justify-content:flex-end;">
-          <button class="btn btn-primary btn-lg" data-action="lesson-step" data-step="B">
-            Passer à l’Étape B : À mémoriser ${icon('arrowRight', 18)}
-          </button>
-        </div>
-      </div>`;
-  }
-
-  // ---- ÉTAPE B : À MÉMORISER ----
-  function renderStepB(lesson, lRec) {
-    const items = lesson.memorize || [];
-    const checkedSet = new Set(lRec.memCheckedIds || []);
-    const checkedCount = items.filter(i => checkedSet.has(i.id)).length;
-
-    const cardsHtml = items.map(item => {
-      const isChecked = checkedSet.has(item.id);
-      return `
-        <div class="mem-card ${item.highlight ? 'highlight' : ''} ${isChecked ? 'checked' : ''}">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-              <span class="badge ${item.highlight ? 'badge-medium' : 'badge-neutral'}">${esc(item.category || 'Notion clé')}</span>
-              ${item.pageRef ? `<span class="badge badge-neutral">${esc(item.pageRef)}</span>` : ''}
-            </div>
-            ${item.highlight ? '<span style="font-size:11.5px;font-weight:700;color:#2563eb;">★ Essentiel examen</span>' : ''}
+        <div class="triad-grid edu-triad-grid">
+          <div class="triad-card understand edu-triad-understand">
+            <h4 class="edu-h4">💡 Ce que tu dois comprendre</h4>
+            <ul class="edu-ul">${asArr(triad.toUnderstand).map(i => `<li class="edu-li"><div class="edu-li-body">${fmtItem(i)}</div></li>`).join('')}</ul>
           </div>
-          <strong style="font-size:15px;color:#0f1e3a;">${esc(item.title)}</strong>
-          <div style="font-size:14px;color:#1e293b;line-height:1.55;">${item.content}</div>
-          <div style="margin-top:auto;padding-top:8px;">
-            <button type="button" class="btn ${isChecked ? 'btn-success' : 'btn-secondary'} btn-sm" data-action="toggle-mem-item" data-lesson="${esc(lesson.id)}" data-mid="${esc(item.id)}">
-              ${isChecked ? '✓ Mémorisé (à vérifier en Étape C)' : 'J’ai mémorisé ceci'}
-            </button>
+          <div class="triad-card memorize edu-triad-memorize">
+            <h4 class="edu-h4">📌 Ce que tu dois mémoriser</h4>
+            <ul class="edu-ul">${asArr(triad.toMemorize).map(i => `<li class="edu-li"><div class="edu-li-body">${fmtItem(i)}</div></li>`).join('')}</ul>
+          </div>
+          <div class="triad-card qcm edu-triad-qcm">
+            <h4 class="edu-h4">🎯 Ce qu’il faut reconnaître en QCM</h4>
+            <ul class="edu-ul">${asArr(triad.toRecognizeInQcm).map(i => `<li class="edu-li"><div class="edu-li-body">${fmtItem(i)}</div></li>`).join('')}</ul>
           </div>
         </div>`;
-    }).join('');
+    } else {
+      bodyHtml = fmt ? fmt.renderIntroCallout(step.intro || u.intro || '', lesson.sourceRef) : `<div class="j-prose"><p>${esc(step.intro || u.intro || '')}</p></div>`;
+    }
+
+    const remainingOthers = phase.steps.filter(s => !s.completed && s.id !== step.id).length;
+    let primaryBtnHtml = '';
+    if (!step.completed) {
+      const lbl = remainingOthers === 0
+        ? '✓ J’ai compris cette étape — Terminer la phase'
+        : '✓ J’ai compris cette étape — Passer à la suivante';
+      primaryBtnHtml = `
+        <button type="button" class="btn btn-primary btn-lg"
+          data-action="complete-understand-step" data-lesson="${esc(lesson.id)}" data-stepid="${esc(step.id)}">
+          ${lbl} ${icon('arrowRight', 18)}
+        </button>`;
+    } else {
+      const undoBtn = !isPreview
+        ? `<button type="button" class="btn btn-ghost btn-sm" data-action="uncomplete-understand-step" data-lesson="${esc(lesson.id)}" data-stepid="${esc(step.id)}">Retirer la validation</button>`
+        : '';
+      const nextStepObj = phase.steps.find(s => !s.completed);
+      const continueBtn = phase.isCompleted && nextPhase
+        ? `<button type="button" class="btn btn-success btn-lg" data-action="lesson-step" data-step="${esc(nextPhase.key)}">Passer maintenant à : ${esc(nextPhase.name)} ${icon('arrowRight', 18)}</button>`
+        : (nextStepObj
+          ? `<button type="button" class="btn btn-primary btn-lg" data-action="lesson-select-substep" data-phase="A" data-substep="${esc(nextStepObj.id)}">Continuer avec l’étape ${nextStepObj.number} ${icon('arrowRight', 18)}</button>`
+          : '');
+      primaryBtnHtml = `${undoBtn}${continueBtn}`;
+    }
 
     return `
-      <div class="card">
-        <div class="card-header">
+      <div class="card j-workspace-card edu-phase-A">
+        <div class="j-workspace-head">
           <div>
-            <h2 class="card-title">${icon('bookmark', 19)} Étape B — Ce que tu DOIS mémoriser (${checkedCount}/${items.length})</h2>
-            <p class="card-subtitle">Définitions exactes, classifications, formules, seuils et distinctions incontournables.</p>
+            <div class="j-workspace-kicker">
+              <span class="edu-phase-pill edu-phase-pill-A">${icon('book', 13)} À comprendre</span>
+              <span class="j-step-id">Étape ${step.number}/${phase.totalCount} · ${esc(step.identifier)}</span>
+              ${window.EpiJourneyUI.renderStatusBadge(step.completed ? 'completed' : 'in_progress')}
+            </div>
+            <h2 class="edu-h2 j-workspace-title">${esc(step.title)}</h2>
           </div>
-          <button type="button" class="btn ${lRec.memDeclaredAll ? 'btn-success' : 'btn-navy'}" data-action="declare-mem-all" data-lesson="${esc(lesson.id)}">
-            ${lRec.memDeclaredAll ? '✓ Section déclarée mémorisée' : 'J’ai mémorisé cette section'}
-          </button>
         </div>
-
-        <div class="alert alert-info">
-          ${icon('brain', 18)}
-          <div><strong>Règle pédagogique :</strong> cliquer sur « J’ai mémorisé ceci » enregistre votre auto-déclaration, mais <strong>ne valide pas la maîtrise</strong>. Votre mémoire sera réellement vérifiée par les flashcards de rappel actif (Étape C) et le mini-test (Étape E, ≥ 80 %).</div>
-        </div>
-
-        <div class="mem-grid">${cardsHtml}</div>
-
-        <div style="margin-top:22px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-          <button class="btn btn-secondary" data-action="lesson-step" data-step="A">${icon('arrowLeft', 16)} Revoir Étape A</button>
-          <button class="btn btn-primary btn-lg" data-action="lesson-step" data-step="C">
-            Vérifier par Rappel actif (Étape C) ${icon('arrowRight', 18)}
-          </button>
-        </div>
+        ${bodyHtml}
+        ${window.EpiJourneyUI.renderStepFooterGuidance(phase, step, nextPhase, nextLesson, courseId, {
+          prevPhase,
+          isPreview,
+          primaryActionHtml: primaryBtnHtml
+        })}
       </div>`;
   }
 
-  // ---- ÉTAPE C : RAPPEL ACTIF (FLASHCARDS) ----
-  function renderStepC(profile, lesson, cards, runtime) {
-    if (!cards.length) {
-      return `<div class="card empty-state">Aucune flashcard disponible pour cette leçon.</div>`;
+  // ---- WORKSPACE PHASE B : À MÉMORISER (CARTES SÉMANTIQUES HAUTE LISIBILITÉ) ----
+  function renderMemorizeStepWorkspace(lesson, lRec, phase, step, prevPhase, nextPhase, nextLesson, courseId, isPreview) {
+    const item = step.item || {};
+    const isChecked = !!step.completed;
+    const fmt = window.EpiFormat;
+    const remainingOthers = phase.steps.filter(s => !s.completed && s.id !== step.id).length;
+
+    let primaryBtnHtml = '';
+    if (!isChecked) {
+      const lbl = remainingOthers === 0
+        ? '✓ J’ai mémorisé cette notion — Terminer la phase'
+        : '✓ J’ai mémorisé cette notion — Suivante';
+      primaryBtnHtml = `
+        <button type="button" class="btn btn-primary btn-lg"
+          data-action="toggle-mem-item" data-lesson="${esc(lesson.id)}" data-mid="${esc(item.id)}" data-advance="1">
+          ${lbl} ${icon('arrowRight', 18)}
+        </button>`;
+    } else {
+      const undoBtn = !isPreview
+        ? `<button type="button" class="btn btn-ghost btn-sm" data-action="toggle-mem-item" data-lesson="${esc(lesson.id)}" data-mid="${esc(item.id)}">Retirer le marquage</button>`
+        : '';
+      const nextStepObj = phase.steps.find(s => !s.completed);
+      const continueBtn = phase.isCompleted && nextPhase
+        ? `<button type="button" class="btn btn-success btn-lg" data-action="lesson-step" data-step="${esc(nextPhase.key)}">Passer maintenant à : ${esc(nextPhase.name)} ${icon('arrowRight', 18)}</button>`
+        : (nextStepObj
+          ? `<button type="button" class="btn btn-primary btn-lg" data-action="lesson-select-substep" data-phase="B" data-substep="${esc(nextStepObj.id)}">Continuer avec la notion ${nextStepObj.number} ${icon('arrowRight', 18)}</button>`
+          : '');
+      primaryBtnHtml = `${undoBtn}${continueBtn}`;
     }
-    const fcState = runtime.flashcard || { idx: 0, revealed: false, draft: '', doneCount: 0 };
-    const idx = Math.min(fcState.idx, cards.length - 1);
-    const card = cards[idx];
-    const rec = profile.flashcards[card.id];
-    const reviewedInLesson = cards.filter(c => profile.flashcards[c.id] && profile.flashcards[c.id].totalReviews > 0).length;
 
     return `
-      <div class="card">
-        <div class="card-header">
+      <div class="card j-workspace-card edu-phase-B">
+        <div class="j-workspace-head">
           <div>
-            <h2 class="card-title">${icon('brain', 19)} Étape C — Rappel actif (Flashcards interactives)</h2>
-            <p class="card-subtitle">Formulez votre réponse avant de révéler la correction. Votre auto-évaluation pilote la répétition espacée.</p>
+            <div class="j-workspace-kicker">
+              <span class="edu-phase-pill edu-phase-pill-B">${icon('bookmark', 13)} À mémoriser</span>
+              <span class="j-step-id">Notion ${step.number}/${phase.totalCount} · ${esc(step.identifier)}</span>
+              ${window.EpiJourneyUI.renderStatusBadge(isChecked ? 'completed' : 'in_progress')}
+            </div>
+            <h2 class="edu-h2 j-workspace-title">${esc(item.title)}</h2>
           </div>
-          <span class="badge ${reviewedInLesson === cards.length ? 'badge-green' : 'badge-medium'}">
-            ${reviewedInLesson} / ${cards.length} cartes pratiquées
-          </span>
         </div>
 
-        <div class="flashcard-stage">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;font-size:13px;color:#64748b;">
-            <span>Carte <strong>${idx + 1}</strong> sur <strong>${cards.length}</strong></span>
-            <div style="display:flex;gap:6px;">
-              ${cards.map((c, ci) => {
-                const cr = profile.flashcards[c.id];
-                const col = !cr ? '#e2e8f0' : (cr.lastRating === 'knew' ? '#059669' : (cr.lastRating === 'partial' ? '#d97706' : '#dc2626'));
-                return `<button type="button" data-action="fc-jump" data-idx="${ci}" title="Carte ${ci + 1}" style="width:26px;height:8px;border-radius:99px;border:${ci === idx ? '2px solid #0f1e3a' : 'none'};background:${col};"></button>`;
-              }).join('')}
+        ${fmt ? fmt.renderMemorizeCardRich(item, isChecked) : `
+          <div class="j-mem-focus-box ${item.highlight ? 'highlight' : ''} ${isChecked ? 'checked' : ''}">
+            <div class="j-mem-focus-content">${item.content || ''}</div>
+          </div>`}
+
+        <div class="alert alert-info" style="margin-top:16px;margin-bottom:0;">
+          ${icon('brain', 18)}
+          <div><strong>Règle pédagogique :</strong> valider une notion confirme son étude dans « À mémoriser », mais la maîtrise réelle est vérifiée en <strong>Flashcards</strong> (répétition espacée) et au <strong>Mini-test (≥ 80 %)</strong>.</div>
+        </div>
+
+        ${window.EpiJourneyUI.renderStepFooterGuidance(phase, step, nextPhase, nextLesson, courseId, {
+          prevPhase,
+          isPreview,
+          primaryActionHtml: primaryBtnHtml
+        })}
+      </div>`;
+  }
+
+  // ---- WORKSPACE PHASE AR : ACTIVE RECALL (QUESTION / RÉPONSE STRUCTURÉE) ----
+  function renderActiveRecallStepWorkspace(lesson, phase, step, runtime, prevPhase, nextPhase, nextLesson, courseId, isPreview) {
+    const ar = step.promptObj || {};
+    const fmt = window.EpiFormat;
+    const arState = (runtime.activeRecall && runtime.activeRecall[step.id]) || { revealed: false, draft: '' };
+    const remainingOthers = phase.steps.filter(s => !s.completed && s.id !== step.id).length;
+
+    let primaryBtnHtml = '';
+    if (!arState.revealed && !step.completed) {
+      primaryBtnHtml = `
+        <button type="button" class="btn btn-primary btn-lg" data-action="ar-reveal" data-arid="${esc(step.id)}">
+          Révéler la réponse attendue
+        </button>`;
+    } else if (!step.completed) {
+      const lbl = remainingOthers === 0
+        ? '✓ Réponse vérifiée — Terminer Active Recall'
+        : '✓ Réponse vérifiée — Activité suivante';
+      primaryBtnHtml = `
+        <button type="button" class="btn btn-success btn-lg" data-action="complete-ar-step" data-lesson="${esc(lesson.id)}" data-arid="${esc(step.id)}">
+          ${lbl} ${icon('arrowRight', 18)}
+        </button>`;
+    } else {
+      const nextStepObj = phase.steps.find(s => !s.completed);
+      primaryBtnHtml = phase.isCompleted && nextPhase
+        ? `<button type="button" class="btn btn-success btn-lg" data-action="lesson-step" data-step="${esc(nextPhase.key)}">Passer maintenant à : ${esc(nextPhase.name)} ${icon('arrowRight', 18)}</button>`
+        : (nextStepObj
+          ? `<button type="button" class="btn btn-primary btn-lg" data-action="lesson-select-substep" data-phase="AR" data-substep="${esc(nextStepObj.id)}">Continuer avec l’activité ${nextStepObj.number} ${icon('arrowRight', 18)}</button>`
+          : '');
+    }
+
+    return `
+      <div class="card j-workspace-card edu-phase-AR">
+        <div class="j-workspace-head">
+          <div>
+            <div class="j-workspace-kicker">
+              <span class="edu-phase-pill edu-phase-pill-AR">${icon('sparkle', 13)} Active Recall</span>
+              <span class="j-step-id">Activité ${step.number}/${phase.totalCount} · ${esc(step.identifier)}</span>
+              ${window.EpiJourneyUI.renderStatusBadge(step.completed ? 'completed' : 'in_progress')}
             </div>
+            <h2 class="edu-h2 j-workspace-title">Restitution active de mémoire</h2>
+          </div>
+        </div>
+
+        <div class="edu-recall-stage">
+          <div class="edu-fc-q-zone">
+            <h4 class="edu-h4" style="margin:0 0 6px;">Question de rappel libre</h4>
+            <div class="edu-fc-question">${fmt ? fmt.enhanceInlineText(step.fullTitle || ar.prompt, { skipLeadTerm: true }) : esc(step.fullTitle || ar.prompt)}</div>
+          </div>
+          <div class="edu-fc-work-zone">
+            <textarea class="input" rows="3" style="width:100%;resize:vertical;" placeholder="Écrivez ou formulez mentalement votre réponse avant de révéler la correction du cours…" data-action="ar-draft" data-arid="${esc(step.id)}">${esc(arState.draft || '')}</textarea>
+            ${(arState.revealed || step.completed) ? `
+              <div class="edu-fc-a-zone">
+                <div class="edu-callout-head" style="margin-bottom:6px;">
+                  <span class="edu-callout-tag">${icon('checkCircle', 14)}<span>Réponse attendue (source cours)</span></span>
+                  ${ar.pageRef ? `<span class="edu-ref-pill">${esc(ar.pageRef)}</span>` : ''}
+                </div>
+                <div class="edu-callout-body">${fmt ? fmt.renderRichAnswer(ar.expectedAnswer || '') : esc(ar.expectedAnswer || '')}</div>
+              </div>` : `
+              <div style="margin-top:10px;font-size:13px;color:var(--text-light);">
+                Tentez de restituer la notion de mémoire, puis révélez la réponse pour vérifier et valider cette activité.
+              </div>`}
+          </div>
+        </div>
+
+        ${window.EpiJourneyUI.renderStepFooterGuidance(phase, step, nextPhase, nextLesson, courseId, {
+          prevPhase,
+          isPreview,
+          primaryActionHtml: primaryBtnHtml
+        })}
+      </div>`;
+  }
+
+  // ---- WORKSPACE PHASE C : FLASHCARDS (CARTE DOUBLE ZONE QUESTION / RÉPONSE) ----
+  function renderFlashcardStepWorkspace(profile, lesson, phase, step, runtime, prevPhase, nextPhase, nextLesson, courseId, isPreview) {
+    const card = step.card;
+    if (!card) return `<div class="card empty-state">Aucune flashcard disponible pour cette leçon.</div>`;
+    const fmt = window.EpiFormat;
+    const rec = profile.flashcards[card.id];
+    const fcState = (runtime.flashcard && runtime.flashcard.cardId === card.id)
+      ? runtime.flashcard
+      : { cardId: card.id, revealed: false, draft: '' };
+
+    const nextStepObj = phase.steps.find(s => !s.completed && s.id !== step.id) || phase.steps.find(s => !s.completed);
+    let footerPrimaryHtml = '';
+    if (phase.isCompleted && nextPhase) {
+      footerPrimaryHtml = `
+        <button type="button" class="btn btn-success btn-lg" data-action="lesson-step" data-step="${esc(nextPhase.key)}">
+          Passer maintenant à : ${esc(nextPhase.name)} ${icon('arrowRight', 18)}
+        </button>`;
+    } else if (step.completed && nextStepObj) {
+      footerPrimaryHtml = `
+        <button type="button" class="btn btn-primary btn-lg" data-action="lesson-select-substep" data-phase="C" data-substep="${esc(nextStepObj.id)}">
+          Continuer avec la carte ${nextStepObj.number} ${icon('arrowRight', 18)}
+        </button>`;
+    }
+
+    return `
+      <div class="card j-workspace-card edu-phase-C">
+        <div class="j-workspace-head">
+          <div>
+            <div class="j-workspace-kicker">
+              <span class="edu-phase-pill edu-phase-pill-C">${icon('brain', 13)} Flashcard SRS</span>
+              <span class="j-step-id">Carte ${step.number}/${phase.totalCount} · ${esc(step.identifier)}</span>
+              ${window.EpiJourneyUI.renderStatusBadge(step.completed ? 'completed' : 'in_progress')}
+              ${rec ? `<span class="badge badge-neutral">Dernier retour : ${rec.lastRating === 'knew' ? 'Su ✓' : (rec.lastRating === 'partial' ? 'Partiel' : 'Oublié')} · ${window.EpiUI.formatDueLabel(window.EpiSRS.daysUntil(rec.nextReviewAt))}</span>` : '<span class="badge badge-neutral">Nouvelle carte</span>'}
+            </div>
+            <h2 class="edu-h2 j-workspace-title">Carte de rappel espacé</h2>
+          </div>
+        </div>
+
+        <div class="edu-recall-stage">
+          <div class="edu-fc-q-zone">
+            <div class="edu-callout-head" style="margin-bottom:6px;">
+              <h4 class="edu-h4" style="margin:0;">Question</h4>
+              ${card.pageRef ? `<span class="edu-ref-pill">${esc(card.pageRef)}</span>` : ''}
+            </div>
+            <div class="edu-fc-question">${fmt ? fmt.enhanceInlineText(card.question, { skipLeadTerm: true }) : esc(card.question)}</div>
           </div>
 
-          <div class="flashcard-box">
-            <div>
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
-                <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
-                  <span class="badge badge-medium">${esc(FC_TYPE_LABELS[card.type] || 'Rappel actif')}</span>
-                  ${card.pageRef ? `<span class="badge badge-neutral">${esc(card.pageRef)}</span>` : ''}
-                </div>
-                ${rec ? `<span style="font-size:12px;color:#64748b;">Dernier retour : <strong>${rec.lastRating === 'knew' ? 'Su ✅' : (rec.lastRating === 'partial' ? 'Partiel 🟠' : 'Oublié 🔴')}</strong> · Prochaine : ${window.EpiUI.formatDueLabel(window.EpiSRS.daysUntil(rec.nextReviewAt))}</span>` : '<span style="font-size:12px;color:#64748b;">Nouvelle carte</span>'}
-              </div>
-              <div class="flashcard-q">${esc(card.question)}</div>
-            </div>
-
+          <div class="edu-fc-work-zone">
             ${!fcState.revealed ? `
               <div>
                 <textarea class="input" rows="2" style="width:100%;resize:vertical;margin-bottom:12px;" placeholder="Essayez d’écrire ou de formuler mentalement votre réponse avant de révéler…" data-action="fc-draft">${esc(fcState.draft || '')}</textarea>
-                <button type="button" class="btn btn-primary btn-lg" style="width:100%;" data-action="fc-reveal">
+                <button type="button" class="btn btn-primary btn-lg" style="width:100%;" data-action="fc-reveal" data-cid="${esc(card.id)}">
                   Révéler la réponse
                 </button>
               </div>
             ` : `
               <div>
-                <div class="flashcard-a">
-                  <div style="font-size:12px;font-weight:700;text-transform:uppercase;color:#1d4ed8;margin-bottom:4px;">Réponse exacte (source cours)</div>
-                  <div>${esc(card.answer)}</div>
-                  ${card.hint ? `<div style="margin-top:8px;font-size:13px;color:#475569;"><em>💡 Repère examen : ${esc(card.hint)}</em></div>` : ''}
+                <div class="edu-fc-a-zone">
+                  <div class="edu-callout-head" style="margin-bottom:6px;">
+                    <span class="edu-callout-tag">${icon('checkCircle', 14)}<span>Réponse exacte (source cours)</span></span>
+                    ${card.pageRef ? `<span class="edu-ref-pill">${esc(card.pageRef)}</span>` : ''}
+                  </div>
+                  <div class="edu-callout-body">${fmt ? fmt.renderRichAnswer(card.answer) : esc(card.answer)}</div>
+                  ${card.hint ? `<div class="edu-fc-hint"><strong>💡 Repère examen :</strong> ${fmt ? fmt.enhanceInlineText(card.hint, { skipLeadTerm: true }) : esc(card.hint)}</div>` : ''}
                 </div>
-                <div style="margin-top:14px;font-size:13px;font-weight:600;color:#475569;margin-bottom:8px;text-align:center;">
-                  Évaluez honnêtement votre rappel pour programmer votre révision :
+                <div style="margin-top:14px;font-size:13px;font-weight:600;color:var(--text-muted);margin-bottom:8px;text-align:center;">
+                  Évaluez honnêtement votre rappel pour valider cette carte et programmer sa révision SRS :
                 </div>
                 <div class="rating-row">
                   <button type="button" class="btn btn-success" data-action="fc-rate" data-cid="${esc(card.id)}" data-rating="knew">✅ Je le savais</button>
@@ -487,50 +650,63 @@ window.EpiViewsLesson = (function () {
           </div>
         </div>
 
-        <div style="margin-top:24px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-          <button class="btn btn-secondary" data-action="lesson-step" data-step="B">${icon('arrowLeft', 16)} Revoir Étape B</button>
-          <button class="btn btn-primary btn-lg" data-action="lesson-step" data-step="D">
-            Passer à l’Étape D : Entraînement QCM ${icon('arrowRight', 18)}
-          </button>
-        </div>
+        ${window.EpiJourneyUI.renderStepFooterGuidance(phase, step, nextPhase, nextLesson, courseId, {
+          prevPhase,
+          isPreview,
+          primaryActionHtml: footerPrimaryHtml
+        })}
       </div>`;
   }
 
-  // ---- ÉTAPE D : ENTRAÎNEMENT QCM ----
-  function renderStepD(lesson, qcms, runtime) {
-    // Priorité aux originaux BM en premier
-    const ordered = qcms.slice().sort((a, b) => (a.sourceType === 'bm_original' ? -1 : 1) - (b.sourceType === 'bm_original' ? -1 : 1));
-    const bmCnt = ordered.filter(q => q.sourceType === 'bm_original').length;
-    const genCnt = ordered.length - bmCnt;
+  // ---- WORKSPACE PHASE D : ENTRAÎNEMENT QCM ----
+  function renderQcmStepWorkspace(profile, lesson, phase, step, runtime, prevPhase, nextPhase, nextLesson, courseId, isPreview) {
+    const q = step.qcm;
+    if (!q) return `<div class="card empty-state">Aucun QCM disponible pour cette leçon.</div>`;
 
-    const cardsHtml = ordered.map((q, idx) => {
-      const st = runtime.lessonQcms[q.id] || { selected: [], submitted: false, isCorrect: false };
-      return window.EpiUI.renderQcmCard(q, st, { prefix: 'lessonq', number: idx + 1 });
-    }).join('');
+    const st = runtime.lessonQcms[q.id] || { selected: [], submitted: false, isCorrect: false };
+    const persisted = profile.qcms[q.id];
+    const nextStepObj = phase.steps.find(s => !s.completed && s.id !== step.id) || phase.steps.find(s => !s.completed);
+
+    let footerPrimaryHtml = '';
+    if (phase.isCompleted && nextPhase) {
+      footerPrimaryHtml = `
+        <button type="button" class="btn btn-success btn-lg" data-action="lesson-step" data-step="${esc(nextPhase.key)}">
+          Passer maintenant à : ${esc(nextPhase.name)} ${icon('arrowRight', 18)}
+        </button>`;
+    } else if ((st.submitted || step.completed) && nextStepObj) {
+      footerPrimaryHtml = `
+        <button type="button" class="btn btn-primary btn-lg" data-action="lesson-select-substep" data-phase="D" data-substep="${esc(nextStepObj.id)}">
+          Continuer avec le QCM ${nextStepObj.number} ${icon('arrowRight', 18)}
+        </button>`;
+    }
 
     return `
-      <div class="card" style="margin-bottom:18px;">
-        <div class="card-header" style="margin-bottom:6px;">
+      <div class="card j-workspace-card edu-phase-D">
+        <div class="j-workspace-head">
           <div>
-            <h2 class="card-title">${icon('clipboard', 19)} Étape D — Entraînement QCM ciblé (${ordered.length} questions)</h2>
-            <p class="card-subtitle">${bmCnt} question${bmCnt > 1 ? 's' : ''} originale${bmCnt > 1 ? 's' : ''} BM Épidémiologie + ${genCnt} nouveau${genCnt > 1 ? 'x' : ''} QCM généré${genCnt > 1 ? 's' : ''} depuis le cours.</p>
+            <div class="j-workspace-kicker">
+              <span class="edu-phase-pill edu-phase-pill-D">${icon('clipboard', 13)} Entraînement QCM</span>
+              <span class="j-step-id">QCM ${step.number}/${phase.totalCount} · ${esc(step.identifier)}</span>
+              ${window.EpiJourneyUI.renderStatusBadge(step.completed ? 'completed' : 'in_progress')}
+              ${persisted && !st.submitted ? `<span class="badge ${persisted.lastCorrect ? 'badge-green' : 'badge-orange'}">Historique : ${persisted.lastCorrect ? 'Réussi ✓' : 'À retravailler'} (${persisted.attempts} essai${persisted.attempts > 1 ? 's' : ''})</span>` : ''}
+            </div>
+            <h2 class="edu-h2 j-workspace-title">${esc(step.title)}</h2>
           </div>
-          <button class="btn btn-secondary btn-sm" data-action="lesson-qcm-reset">Réinitialiser mes réponses</button>
+          ${st.submitted ? `<button type="button" class="btn btn-secondary btn-sm" data-action="lesson-qcm-reset-one" data-qid="${esc(q.id)}">Refaire ce QCM</button>` : ''}
         </div>
-      </div>
 
-      ${cardsHtml}
+        ${window.EpiUI.renderQcmCard(q, st, { prefix: 'lessonq', number: step.number })}
 
-      <div style="margin-top:20px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-        <button class="btn btn-secondary" data-action="lesson-step" data-step="C">${icon('arrowLeft', 16)} Revoir Flashcards</button>
-        <button class="btn btn-primary btn-lg" data-action="lesson-step" data-step="E">
-          Tester mes connaissances (Mini-test Étape E) ${icon('arrowRight', 18)}
-        </button>
+        ${window.EpiJourneyUI.renderStepFooterGuidance(phase, step, nextPhase, nextLesson, courseId, {
+          prevPhase,
+          isPreview,
+          primaryActionHtml: footerPrimaryHtml
+        })}
       </div>`;
   }
 
-  // ---- ÉTAPE E : MINI-TEST & COMPLÉTION INTELLIGENTE ----
-  function renderStepE(profile, course, lesson, lRec, memEvidence, runtime, catalog) {
+  // ---- WORKSPACE PHASE E : MINI-TEST DE VALIDATION (≥ 80 %) ----
+  function renderMiniTestStepWorkspace(profile, course, lesson, lRec, memEvidence, phase, step, runtime, catalog, prevPhase, nextLesson, isPreview) {
     const questions = getMiniTestQuestions(course, lesson, catalog);
     if (!questions.length) {
       return `
@@ -539,47 +715,48 @@ window.EpiViewsLesson = (function () {
           <span style="font-size:13.5px;">Ajoutez ou validez des QCM depuis l’espace Administration CMS pour activer le mini-test de cette leçon.</span>
         </div>`;
     }
+
+    const passingScore = phase.passingScore || 80;
     const mt = runtime.miniTest || { answers: {}, submitted: false, scorePct: 0, correctCount: 0, newlyMastered: false };
-    const answeredCount = questions.filter(q => (mt.answers[q.id] || []).length > 0).length;
+    const answeredCount = questions.filter(q => asArr(mt.answers[q.id]).length > 0).length;
+    const openLessonAction = isPreview ? 'admin-preview-lesson' : 'go-lesson';
 
     let resultBanner = '';
     if (mt.submitted) {
       const nextRec = window.EpiPlanner.getNextLessonInCourse(profile, course.id, lesson.id);
-      if (mt.scorePct >= 80 && memEvidence) {
+      if (mt.scorePct >= passingScore && memEvidence) {
         const srs = profile.lessonSrs[lesson.id];
         resultBanner = `
-          <div class="card" style="background:linear-gradient(135deg,#ecfdf5,#f0fdfa);border:1.5px solid #6ee7b7;margin-bottom:20px;">
+          <div class="card j-mt-result-pass">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
               <div style="flex:1;min-width:260px;">
-                <span class="badge badge-green" style="margin-bottom:8px;">🏆 Score : ${mt.scorePct} % (${mt.correctCount}/${questions.length}) · LEÇON MAÎTRISÉE</span>
-                <h2 style="margin:4px 0 6px;color:#065f46;font-size:19px;">
-                  Bravo ! Tu as terminé cette leçon. Mais attention : pour ne pas oublier, tu dois la réviser régulièrement.
-                </h2>
-                <p style="margin:0;font-size:14px;color:#047857;">
-                  Ta répétition espacée est programmée automatiquement : <strong>1ère révision prévue ${srs ? window.EpiUI.formatDueLabel(window.EpiSRS.daysUntil(srs.nextReviewAt)) : 'dans 1 jour (J+1)'}</strong> (puis J+3 → J+7 → J+14 → J+30).
+                <span class="badge badge-green" style="margin-bottom:8px;">🏆 Score : ${mt.scorePct} % (${mt.correctCount}/${questions.length}) · PHASE & LEÇON VALIDÉES</span>
+                <h2 style="margin:4px 0 6px;font-size:19px;">Bravo ! Cette phase est terminée et la leçon est maîtrisée.</h2>
+                <p style="margin:0;font-size:14px;">
+                  Répétition espacée programmée automatiquement : <strong>1ère révision prévue ${srs ? window.EpiUI.formatDueLabel(window.EpiSRS.daysUntil(srs.nextReviewAt)) : 'demain (J+1)'}</strong> (J+1 → J+3 → J+7 → J+14 → J+30).
                 </p>
               </div>
               <div style="display:flex;flex-direction:column;gap:8px;">
-                ${nextRec ? `<button class="btn btn-success btn-lg" data-action="go-lesson" data-course="${esc(nextRec.course.id)}" data-lesson="${esc(nextRec.lesson.id)}" data-step="A">Prochaine leçon recommandée →</button>` : ''}
+                ${nextRec ? `<button class="btn btn-success btn-lg" data-action="${openLessonAction}" data-course="${esc(nextRec.course.id)}" data-lesson="${esc(nextRec.lesson.id)}" data-step="A">Leçon suivante recommandée →</button>` : ''}
                 <button class="btn btn-secondary btn-sm" data-action="minitest-retry">Refaire le mini-test</button>
               </div>
             </div>
           </div>`;
-      } else if (mt.scorePct >= 80 && !memEvidence) {
+      } else if (mt.scorePct >= passingScore && !memEvidence) {
         resultBanner = `
-          <div class="alert alert-warning" style="margin-bottom:20px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
+          <div class="alert alert-warning" style="margin-bottom:18px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
             <div>
               <strong>Excellent score : ${mt.scorePct} % (${mt.correctCount}/${questions.length}) !</strong><br>
-              Pour que la leçon soit officiellement marquée <strong>Maîtrisée</strong> et planifiée en répétition espacée, complétez d’abord vos exercices de mémorisation / rappel actif (au moins 2 flashcards en Étape C + Étape B).
+              Le mini-test est réussi. Pour activer la maîtrise SRS complète, terminez également vos Flashcards (au moins 2 cartes évaluées) et la phase À mémoriser.
             </div>
-            <button class="btn btn-warning btn-sm" data-action="lesson-step" data-step="C">Aller aux Flashcards (Étape C) →</button>
+            <button class="btn btn-warning btn-sm" data-action="lesson-step" data-step="C">Aller aux Flashcards →</button>
           </div>`;
       } else {
         resultBanner = `
-          <div class="alert alert-danger" style="margin-bottom:20px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
+          <div class="alert alert-danger" style="margin-bottom:18px;align-items:center;justify-content:space-between;flex-wrap:wrap;">
             <div>
-              <strong>Score obtenu : ${mt.scorePct} % (${mt.correctCount}/${questions.length}) — Seuil de maîtrise : 80 %</strong><br>
-              Cette leçon reste « En cours » et a été ajoutée à vos points faibles. Nous vous recommandons de relire l’Étape A/B et de revoir les corrections ci-dessous avant de réessayer.
+              <strong>Score obtenu : ${mt.scorePct} % (${mt.correctCount}/${questions.length}) — Seuil requis : ${passingScore} %</strong><br>
+              La phase Mini-test reste <strong>En cours</strong>. Relisez les explications ci-dessous puis réessayez pour atteindre ≥ ${passingScore} %.
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <button class="btn btn-secondary btn-sm" data-action="lesson-step" data-step="B">Revoir À mémoriser</button>
@@ -589,48 +766,135 @@ window.EpiViewsLesson = (function () {
       }
     }
 
-    const questionsHtml = questions.map((q, idx) => {
-      const sel = mt.answers[q.id] || [];
+    const objectivesHtml = lesson.miniTest && asArr(lesson.miniTest.objectives).length > 0 ? `
+      <div class="j-mt-objectives">
+        <strong>Objectifs évalués :</strong>
+        <ul>${asArr(lesson.miniTest.objectives).map(o => `<li>${esc(o)}</li>`).join('')}</ul>
+      </div>` : '';
+
+    // Mode A : Une question du mini-test sélectionnée
+    if (step.kind === 'minitest_q' && step.qcm) {
+      const q = step.qcm;
+      const sel = asArr(mt.answers[q.id]);
       const isCorr = mt.submitted && arraysEqualSet(sel, q.correct);
-      return window.EpiUI.renderQcmCard(
-        q,
-        { selected: sel, submitted: mt.submitted, isCorrect: isCorr },
-        { prefix: 'minitest', number: idx + 1, hideSubmit: true }
-      );
+      const nextUnanswered = questions.find((qq, qi) => qi > step.qIndex && asArr(mt.answers[qq.id]).length === 0)
+        || questions.find(qq => asArr(mt.answers[qq.id]).length === 0 && qq.id !== q.id);
+
+      let footerPrimaryHtml = '';
+      if (answeredCount === questions.length && !mt.submitted) {
+        footerPrimaryHtml = `
+          <button type="button" class="btn btn-success btn-lg" data-action="lesson-select-substep" data-phase="E" data-substep="mt_validate">
+            Toutes les questions répondues — Aller à la validation finale ${icon('arrowRight', 18)}
+          </button>`;
+      } else if (nextUnanswered) {
+        footerPrimaryHtml = `
+          <button type="button" class="btn btn-primary btn-lg" data-action="lesson-select-substep" data-phase="E" data-substep="mtq_${esc(nextUnanswered.id)}">
+            Question suivante non répondue ${icon('arrowRight', 18)}
+          </button>`;
+      } else {
+        footerPrimaryHtml = `
+          <button type="button" class="btn btn-primary btn-lg" data-action="lesson-select-substep" data-phase="E" data-substep="mt_validate">
+            Voir le récapitulatif & valider ${icon('arrowRight', 18)}
+          </button>`;
+      }
+
+      return `
+        ${resultBanner}
+        <div class="card j-workspace-card edu-phase-E">
+          <div class="j-workspace-head">
+            <div>
+              <div class="j-workspace-kicker">
+                <span class="edu-phase-pill edu-phase-pill-E">${icon('award', 13)} Mini-test · Seuil ≥ ${passingScore} %</span>
+                <span class="j-step-id">Question ${step.number}/${questions.length} · ${esc(step.identifier)}</span>
+                ${window.EpiJourneyUI.renderStatusBadge(sel.length > 0 ? 'completed' : 'in_progress', sel.length > 0 ? 'Répondue' : 'En cours')}
+                ${lRec.miniTestBest !== null ? `<span class="badge ${lRec.miniTestBest >= passingScore ? 'badge-green' : 'badge-orange'}">Meilleur : ${lRec.miniTestBest} %</span>` : ''}
+              </div>
+              <h2 class="edu-h2 j-workspace-title">${esc(step.title)}</h2>
+            </div>
+            <span class="badge badge-neutral">${answeredCount}/${questions.length} répondues</span>
+          </div>
+
+          ${objectivesHtml}
+
+          ${window.EpiUI.renderQcmCard(
+            q,
+            { selected: sel, submitted: mt.submitted, isCorrect: isCorr },
+            { prefix: 'minitest', number: step.number, hideSubmit: true }
+          )}
+
+          ${window.EpiJourneyUI.renderStepFooterGuidance(phase, step, null, nextLesson, course.id, {
+            prevPhase,
+            isPreview,
+            primaryActionHtml: footerPrimaryHtml
+          })}
+        </div>`;
+    }
+
+    // Mode B : Étape finale de validation du Mini-test (récapitulatif + soumission + corrections complètes)
+    const checklistHtml = questions.map((q, idx) => {
+      const sel = asArr(mt.answers[q.id]);
+      const answered = sel.length > 0;
+      const ok = mt.submitted && arraysEqualSet(sel, q.correct);
+      return `
+        <div class="j-mt-check-row ${mt.submitted ? (ok ? 'ok' : 'ko') : (answered ? 'answered' : '')}">
+          <div style="min-width:0;flex:1;">
+            <strong>Q${idx + 1}. ${esc(q.topic || q.id)}</strong>
+            <div style="font-size:12.5px;color:var(--text-light);">
+              ${mt.submitted
+                ? (ok ? 'Bonne réponse ✓' : `Réponse(s) attendue(s) : ${q.correct.join(', ')} (votre choix : ${sel.join(', ') || '—'})`)
+                : (answered ? `Réponse sélectionnée : ${sel.join(', ')}` : 'Pas encore répondue')}
+            </div>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" data-action="lesson-select-substep" data-phase="E" data-substep="mtq_${esc(q.id)}">
+            ${mt.submitted ? 'Voir la correction' : (answered ? 'Modifier' : 'Répondre →')}
+          </button>
+        </div>`;
     }).join('');
 
+    const fullCorrectionsHtml = mt.submitted ? `
+      <div style="margin-top:18px;">
+        <h3 style="margin:0 0 12px;font-size:16px;">Correction détaillée des ${questions.length} questions</h3>
+        ${questions.map((q, idx) => {
+          const sel = asArr(mt.answers[q.id]);
+          const ok = arraysEqualSet(sel, q.correct);
+          return window.EpiUI.renderQcmCard(q, { selected: sel, submitted: true, isCorrect: ok }, { prefix: 'minitest', number: idx + 1, hideSubmit: true });
+        }).join('')}
+      </div>` : '';
+
+    const submitBtnHtml = !mt.submitted ? `
+      <button type="button" class="btn btn-primary btn-lg" data-action="minitest-submit" ${answeredCount < questions.length ? 'disabled' : ''}>
+        Terminer la leçon & Corriger le mini-test (${answeredCount}/${questions.length})
+      </button>` : `
+      <button type="button" class="btn btn-secondary" data-action="minitest-retry">Refaire le mini-test</button>
+      ${nextLesson && phase.isCompleted ? `<button type="button" class="btn btn-success btn-lg" data-action="${openLessonAction}" data-course="${esc(course.id)}" data-lesson="${esc(nextLesson.id)}" data-step="A">Passer à la leçon suivante ${icon('arrowRight', 18)}</button>` : ''}`;
+
     return `
-      <div class="card" style="margin-bottom:18px;">
-        <div class="card-header" style="margin-bottom:4px;">
-          <div>
-            <h2 class="card-title">${icon('award', 19)} Étape E — Mini-test de validation (${questions.length} questions)</h2>
-            <p class="card-subtitle">Teste compréhension, mémorisation, pièges QCM et distinctions. Objectif : <strong>≥ 80 %</strong> pour maîtriser la leçon et lancer le calendrier SRS.</p>
-          </div>
-          ${lRec.miniTestBest !== null ? `<span class="badge ${lRec.miniTestBest >= 80 ? 'badge-green' : 'badge-orange'}">Meilleur score : ${lRec.miniTestBest} %</span>` : ''}
-        </div>
-      </div>
-
       ${resultBanner}
-
-      ${questionsHtml}
-
-      ${!mt.submitted ? `
-        <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">
-          <div style="font-size:14px;color:#475569;">
-            Progression du mini-test : <strong>${answeredCount} / ${questions.length}</strong> question(s) répondue(s)
+      <div class="card j-workspace-card edu-phase-E">
+        <div class="j-workspace-head">
+          <div>
+            <div class="j-workspace-kicker">
+              <span class="edu-phase-pill edu-phase-pill-E">${icon('award', 13)} Validation Mini-test</span>
+              <span class="j-step-id">Validation finale · ${esc(step.identifier)}</span>
+              ${window.EpiJourneyUI.renderStatusBadge(phase.isCompleted ? 'completed' : 'in_progress')}
+              ${lRec.miniTestBest !== null ? `<span class="badge ${lRec.miniTestBest >= passingScore ? 'badge-green' : 'badge-orange'}">Meilleur score : ${lRec.miniTestBest} %</span>` : ''}
+            </div>
+            <h2 class="edu-h2 j-workspace-title">${esc((lesson.miniTest && lesson.miniTest.title) || 'Validation du Mini-test')}</h2>
           </div>
-          <button type="button" class="btn btn-primary btn-lg" data-action="minitest-submit" ${answeredCount < questions.length ? 'disabled' : ''}>
-            Terminer la leçon & Corriger le mini-test
-          </button>
-        </div>` : ''}
-    `;
-  }
+        </div>
 
-  function arraysEqualSet(a, b) {
-    if (!a || !b || a.length !== b.length) return false;
-    const sa = a.slice().sort().join(',');
-    const sb = b.slice().sort().join(',');
-    return sa === sb;
+        ${objectivesHtml}
+
+        <div class="j-mt-checklist">${checklistHtml}</div>
+
+        ${window.EpiJourneyUI.renderStepFooterGuidance(phase, step, null, nextLesson, course.id, {
+          prevPhase,
+          isPreview,
+          primaryActionHtml: submitBtnHtml
+        })}
+
+        ${fullCorrectionsHtml}
+      </div>`;
   }
 
   return {

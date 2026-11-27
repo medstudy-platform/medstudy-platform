@@ -51,7 +51,10 @@ window.EpiPlanner = (function () {
     });
 
     const total = course.lessons.length;
-    const progressPct = total > 0 ? Math.round(((completed + studied * 0.35 - completed * 0.35) / total) * 100) : 0;
+    const cj = window.EpiJourney ? window.EpiJourney.getCourseJourney(profile, course) : null;
+    const progressPct = cj
+      ? cj.overallPct
+      : (total > 0 ? Math.round(((completed + studied * 0.35 - completed * 0.35) / total) * 100) : 0);
     const masteryPct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
     return {
@@ -65,7 +68,12 @@ window.EpiPlanner = (function () {
       red,
       needsRevision,
       progressPct: Math.min(100, Math.max(0, progressPct)),
-      masteryPct
+      masteryPct,
+      phasesCompleted: cj ? cj.completedPhases : 0,
+      phasesTotal: cj ? cj.totalPhases : 0,
+      stepsCompleted: cj ? cj.completedSteps : 0,
+      stepsTotal: cj ? cj.totalSteps : 0,
+      journeyCompletedLessons: cj ? cj.completedLessons : completed
     };
   }
 
@@ -189,22 +197,24 @@ window.EpiPlanner = (function () {
     const flat = getAllLessonsFlat();
     const inProg = flat.find(x => {
       const r = profile.lessons[x.lesson.id];
-      return r && r.status === 'in_progress' && !r.mastered;
+      const lj = window.EpiJourney ? window.EpiJourney.getLessonJourney(profile, x.course, x.lesson) : null;
+      return ((r && r.status === 'in_progress') || (lj && lj.status === 'in_progress')) && !(r && r.mastered && lj && lj.isCompleted);
     });
     if (inProg) {
-      const r = profile.lessons[inProg.lesson.id];
-      let step = 'A';
-      if (r.stepAVisited && r.memCheckedIds.length === 0) step = 'B';
-      else if (r.memCheckedIds.length > 0 && !window.EpiSRS.hasCompletedMemorizationEvidence(profile, inProg.lesson)) step = 'C';
-      else if (window.EpiSRS.hasCompletedMemorizationEvidence(profile, inProg.lesson)) step = 'E';
+      const lj = window.EpiJourney ? window.EpiJourney.getLessonJourney(profile, inProg.course, inProg.lesson) : null;
+      const targetPhase = (lj && lj.nextPhase) || { key: 'A', name: 'À comprendre', progressText: '' };
+      const step = targetPhase.key || 'A';
+      const subStepId = targetPhase.nextStep ? targetPhase.nextStep.id : '';
 
       return {
         type: 'lesson',
         badge: `Leçon en cours · ${inProg.course.code}`,
-        title: `Terminer : ${inProg.lesson.title}`,
-        reason: `Vous avez déjà entamé cette leçon (${inProg.lesson.bmCount} QCM BM). Passez directement à l’Étape ${step} pour valider la maîtrise (≥ 80 %).`,
-        ctaLabel: `Reprendre à l’Étape ${step}`,
-        action: { route: 'lesson', courseId: inProg.course.id, lessonId: inProg.lesson.id, step }
+        title: `Continuer : ${inProg.lesson.title}`,
+        reason: lj
+          ? `Progression : ${lj.completedPhases}/${lj.totalPhases} phases (${lj.overallPct} %). Reprenez directement dans « ${targetPhase.name} » (${targetPhase.progressText}).`
+          : `Vous avez déjà entamé cette leçon. Reprenez à la phase suivante pour valider la maîtrise (≥ 80 %).`,
+        ctaLabel: `Reprendre : ${targetPhase.shortName || targetPhase.name}`,
+        action: { route: 'lesson', courseId: inProg.course.id, lessonId: inProg.lesson.id, step, subStepId }
       };
     }
 

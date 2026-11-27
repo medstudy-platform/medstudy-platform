@@ -24,18 +24,23 @@ window.EpiApp = (function () {
     sidebarOpen: false,
 
     // État CMS Administrateur
-    adminData: { modules: [], courses: [], flashcards: [], qcms: [], backups: [], users: [], aiConfig: { provider: 'local', configured: false } },
+    adminData: { modules: [], courses: [], flashcards: [], qcms: [], backups: [], users: [], importJobs: [], aiConfig: { provider: 'local', configured: false } },
     adminState: {
       filters: { status: 'all', moduleId: 'all', search: '' },
-      addWizard: { createdCourseId: null, showNewModule: false, selectedModuleId: '', analyzing: false, uploading: false },
+      addWizard: { createdCourseId: null, showNewModule: false, selectedModuleId: '', analyzing: false, uploading: false, pendingFiles: [], pendingSupportFiles: [], activeJob: null },
       editor: null,
       scanningPpts: false,
       previewReturnRoute: 'admin_ppt_imports'
     },
 
     // État éphémère de session étudiante
+    theme: window.EpiStorage ? window.EpiStorage.getTheme() : 'light',
     runtime: {
-      flashcard: { idx: 0, revealed: false, draft: '' },
+      activeSubStepId: null,
+      courseLessonsNavOpen: false,
+      phaseStepsCollapsed: false,
+      activeRecall: {},
+      flashcard: { cardId: null, revealed: false, draft: '' },
       lessonQcms: {},
       arenaQcms: {},
       miniTest: { answers: {}, submitted: false, scorePct: 0, correctCount: 0, newlyMastered: false },
@@ -78,6 +83,7 @@ window.EpiApp = (function () {
     ]);
     applyStudentCatalog(cat);
     window.EpiStorage.hydrateFromServer(progRes.progress, state.user);
+    state.theme = window.EpiStorage.getTheme();
 
     if (isAdmin()) {
       const adm = await window.EpiAPI.getAdminCatalog();
@@ -88,6 +94,7 @@ window.EpiApp = (function () {
         qcms: window.EpiUI.asArr(adm.qcms),
         backups: window.EpiUI.asArr(adm.backups),
         users: window.EpiUI.asArr(adm.users),
+        importJobs: window.EpiUI.asArr(adm.importJobs),
         aiConfig: adm.aiConfig || { provider: 'local', configured: false }
       };
       if (!state.adminState.addWizard.selectedModuleId && state.adminData.modules[0]) {
@@ -109,6 +116,7 @@ window.EpiApp = (function () {
         qcms: window.EpiUI.asArr(adm.qcms),
         backups: window.EpiUI.asArr(adm.backups),
         users: window.EpiUI.asArr(adm.users),
+        importJobs: window.EpiUI.asArr(adm.importJobs),
         aiConfig: adm.aiConfig || { provider: 'local', configured: false }
       };
     }
@@ -126,6 +134,7 @@ window.EpiApp = (function () {
     const fcs = JSON.parse(JSON.stringify(state.adminData.flashcards.filter(f => f.courseId === courseId)));
     const qs = JSON.parse(JSON.stringify(state.adminData.qcms.filter(q => q.courseId === courseId)));
 
+    const latestJob = window.EpiUI.asArr(state.adminData.importJobs).find(j => j.courseId === courseId) || null;
     state.adminState.editor = {
       course: cloneCourse,
       flashcards: fcs,
@@ -135,14 +144,84 @@ window.EpiApp = (function () {
       fcLessonFilter: 'all',
       qcmLessonFilter: 'all',
       majorLessonIds: [],
+      qualityReport: (cloneCourse.aiExtraction && cloneCourse.aiExtraction.qualityReport) || (cloneCourse.metadata && cloneCourse.metadata.lastQualityReport) || null,
+      activeJob: latestJob,
       dirty: false,
       saving: false,
-      analyzing: false
+      analyzing: false,
+      regenerating: false
     };
     state.route = 'admin_editor';
     state.sidebarOpen = false;
     render();
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function runUniversalImportPipeline(courseId, existingJobId, retryStage) {
+    const syncJobUi = (jobObj, busy) => {
+      if (state.adminState.addWizard && state.adminState.addWizard.createdCourseId === courseId) {
+        state.adminState.addWizard.activeJob = jobObj;
+        state.adminState.addWizard.analyzing = busy;
+      }
+      if (state.adminState.editor && state.adminState.editor.course && state.adminState.editor.course.id === courseId) {
+        state.adminState.editor.activeJob = jobObj;
+        state.adminState.editor.analyzing = busy;
+      }
+      render();
+    };
+
+    try {
+      let job = null;
+      if (existingJobId) {
+        const res = await window.EpiAPI.stepImportJob(existingJobId, retryStage);
+        job = res.job;
+        syncJobUi(job, !res.completed && res.ok);
+        if (!res.ok) {
+          window.EpiUI.toast(res.error || 'Échec de l’étape du pipeline.', 'warning');
+          return;
+        }
+      } else {
+        syncJobUi(null, true);
+        const startRes = await window.EpiAPI.startImportJob(courseId);
+        job = startRes.job;
+        syncJobUi(job, true);
+      }
+
+      let guard = 0;
+      while (job && job.status === 'running' && guard < 14) {
+        guard++;
+        const stepRes = await window.EpiAPI.stepImportJob(job.id);
+        job = stepRes.job;
+        if (!stepRes.ok) {
+          syncJobUi(job, false);
+          window.EpiUI.toast(stepRes.error || `Erreur à l’étape ${job ? job.currentStage : ''}.`, 'warning');
+          return;
+        }
+        syncJobUi(job, !stepRes.completed);
+        if (stepRes.completed) {
+          await refreshCatalogsOnly();
+          const freshCourse = state.adminData.courses.find(c => c.id === courseId);
+          const qr = job.qualityReport || (freshCourse && freshCourse.aiExtraction && freshCourse.aiExtraction.qualityReport);
+          const ai = (freshCourse && freshCourse.aiExtraction) || {};
+          window.EpiUI.toast(
+            `Pipeline 11 étapes terminé : ${ai.lessonsExtracted || 0} leçon(s), ${ai.flashcardsCreated || 0} flashcards, ${ai.qcmsCreated || 0} QCM · Qualité ${qr ? qr.score + '/100' : 'OK'} (en brouillon).`,
+            'success'
+          );
+          if (state.route === 'admin_editor' && state.adminState.editor && state.adminState.editor.course.id === courseId) {
+            openCourseInEditor(courseId, 'lessons');
+          } else {
+            syncJobUi(job, false);
+          }
+          return;
+        }
+      }
+      syncJobUi(job, false);
+    } catch (err) {
+      if (state.adminState.addWizard) state.adminState.addWizard.analyzing = false;
+      if (state.adminState.editor) state.adminState.editor.analyzing = false;
+      window.EpiUI.toast(err.message || 'Erreur lors du traitement du cours.', 'warning');
+      render();
+    }
   }
 
   function stopExamTimer() {
@@ -189,32 +268,44 @@ window.EpiApp = (function () {
     return null;
   }
 
-  function openLesson(courseId, lessonId, step) {
+  function openLesson(courseId, lessonId, step, subStepId) {
     const profile = window.EpiStorage.getActiveProfile();
     const pair = findLesson(lessonId);
     if (!pair) return;
     state.route = 'lesson';
     state.courseId = pair.course.id;
     state.lessonId = pair.lesson.id;
-    state.lessonStep = step || 'A';
     state.sidebarOpen = false;
-    state.runtime.flashcard = { idx: 0, revealed: false, draft: '' };
+    state.runtime.courseLessonsNavOpen = false;
+    state.runtime.phaseStepsCollapsed = false;
+    state.runtime.activeRecall = {};
+    state.runtime.flashcard = { cardId: null, revealed: false, draft: '' };
     state.runtime.lessonQcms = {};
     state.runtime.miniTest = { answers: {}, submitted: false, scorePct: 0, correctCount: 0, newlyMastered: false };
 
-    const lRec = window.EpiStorage.ensureLessonRecord(profile, pair.lesson.id);
-    if (lRec.status === 'not_started') {
-      lRec.status = 'in_progress';
-      lRec.seenRevisionVersion = Number(pair.lesson.revisionVersion) || 1;
-    }
-    if (state.lessonStep === 'A' && !lRec.stepAVisited) {
-      lRec.stepAVisited = true;
-      lRec.lastStudiedAt = new Date().toISOString();
-      const log = window.EpiStorage.ensureDailyLog(profile);
-      if (!log.lessonsStudied.includes(pair.lesson.id)) log.lessonsStudied.push(pair.lesson.id);
-      notifyBadges(window.EpiGamification.awardXP(profile, 10));
-    }
-    window.EpiStorage.save();
+    const lj = window.EpiJourney.getLessonJourney(profile, pair.course, pair.lesson, {
+      catalog: window.EpiData,
+      runtime: state.runtime,
+      activePhaseKey: step || null,
+      activeStepId: subStepId || null
+    });
+
+    const chosenPhase = step
+      ? (lj.phases.find(p => p.key === step) || lj.activePhase || lj.phases[0])
+      : (lj.nextPhase || lj.phases[0]);
+    state.lessonStep = chosenPhase ? chosenPhase.key : 'A';
+
+    const lRec = profile.lessons[pair.lesson.id];
+    const savedStepId = lRec && lRec.lastActiveStepByPhase && lRec.lastActiveStepByPhase[state.lessonStep];
+    const resolvedStep = chosenPhase && chosenPhase.steps.length
+      ? (chosenPhase.steps.find(s => s.id === subStepId)
+        || chosenPhase.steps.find(s => s.id === savedStepId)
+        || chosenPhase.nextStep
+        || chosenPhase.steps[0])
+      : null;
+    state.runtime.activeSubStepId = resolvedStep ? resolvedStep.id : null;
+
+    // RÈGLE STRICTE : ouvrir une leçon ou une étape NE la marque PAS comme étudiée ni terminée !
     render();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -328,7 +419,7 @@ window.EpiApp = (function () {
               ${rev.overdue.length} en retard · ${rev.dueToday.length} due(s) aujourd’hui · ${rev.forgotten.length} oubliée(s).
               <div style="margin-top:8px;"><button class="btn btn-warning btn-sm" data-action="modal-go-revisions">Lancer mes révisions →</button></div>
             </div>
-          </div>` : `<div style="font-size:14px;color:#475569;padding:8px 0;">✅ Aucune révision urgente en retard aujourd’hui.</div>`}
+          </div>` : `<div style="font-size:14px;color:var(--text-muted);padding:8px 0;">✅ Aucune révision urgente en retard aujourd’hui.</div>`}
         ${weak.length > 0 ? `
           <div class="alert alert-danger" style="margin:0;">
             <div>
@@ -361,38 +452,38 @@ window.EpiApp = (function () {
 
     const profiles = window.EpiStorage.listProfiles();
     const listHtml = profiles.map(p => `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid ${p.id === active.id ? '#2563eb' : '#e2e8f0'};border-radius:10px;background:${p.id === active.id ? '#eff6ff' : '#fff'};margin-bottom:8px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border:1px solid ${p.id === active.id ? 'var(--primary)' : 'var(--border)'};border-radius:10px;background:${p.id === active.id ? 'var(--primary-soft)' : 'var(--surface)'};margin-bottom:8px;">
         <div>
-          <strong style="color:#0f1e3a;">${window.EpiUI.esc(p.name)}</strong> ${p.id === active.id ? '<span class="badge badge-medium">Actif</span>' : ''}
-          <div style="font-size:12px;color:#64748b;">${p.xp} XP · Série ${p.streak.count} j</div>
+          <strong style="color:var(--navy);">${window.EpiUI.esc(p.name)}</strong> ${p.id === active.id ? '<span class="badge badge-medium">Actif</span>' : ''}
+          <div style="font-size:12px;color:var(--text-light);">${p.xp} XP · Série ${p.streak.count} j</div>
         </div>
         <div style="display:flex;gap:6px;">
           ${p.id !== active.id ? `<button class="btn btn-primary btn-sm" data-action="switch-profile" data-pid="${p.id}">Activer</button>` : ''}
-          ${profiles.length > 1 ? `<button class="btn btn-ghost btn-sm" style="color:#dc2626;" data-action="delete-profile" data-pid="${p.id}">Suppr.</button>` : ''}
+          ${profiles.length > 1 ? `<button class="btn btn-ghost btn-sm" style="color:var(--red);" data-action="delete-profile" data-pid="${p.id}">Suppr.</button>` : ''}
         </div>
       </div>`).join('');
 
     const html = `
       <div style="margin-bottom:16px;">
-        <h4 style="margin:0 0 8px;font-size:14px;color:#0f1e3a;">Profils étudiants locaux (${profiles.length})</h4>
+        <h4 style="margin:0 0 8px;font-size:14px;color:var(--navy);">Profils étudiants locaux (${profiles.length})</h4>
         ${listHtml}
       </div>
-      <div style="border-top:1px solid #e2e8f0;padding-top:14px;margin-bottom:16px;">
+      <div style="border-top:1px solid var(--border);padding-top:14px;margin-bottom:16px;">
         <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;">Créer un nouveau profil étudiant (démarre à 0 %)</label>
         <div style="display:flex;gap:8px;">
           <input type="text" id="new-profile-name" class="input" style="flex:1;" placeholder="Ex. Amine — 6ème Année">
           <button class="btn btn-primary btn-sm" data-action="create-profile">Créer</button>
         </div>
       </div>
-      <div style="border-top:1px solid #e2e8f0;padding-top:14px;margin-bottom:16px;">
+      <div style="border-top:1px solid var(--border);padding-top:14px;margin-bottom:16px;">
         <label style="display:block;font-size:13px;font-weight:600;margin-bottom:6px;">Renommer le profil actif</label>
         <div style="display:flex;gap:8px;">
           <input type="text" id="rename-profile-input" class="input" style="flex:1;" value="${window.EpiUI.esc(active.name)}">
           <button class="btn btn-secondary btn-sm" data-action="rename-profile">Renommer</button>
         </div>
       </div>
-      <div style="border-top:1px solid #e2e8f0;padding-top:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-        <span style="font-size:12.5px;color:#64748b;">Réinitialiser toutes les données du profil actif :</span>
+      <div style="border-top:1px solid var(--border);padding-top:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <span style="font-size:12.5px;color:var(--text-light);">Réinitialiser toutes les données du profil actif :</span>
         <button class="btn btn-danger btn-sm" data-action="reset-profile">Réinitialiser à 0 %</button>
       </div>`;
     window.EpiUI.openModal('Gestion des profils étudiants', html);
@@ -565,9 +656,12 @@ window.EpiApp = (function () {
         <div class="topbar-title">${routeTitles[state.route] || 'MedStudy'}</div>
       </div>
       <div class="topbar-right">
-        ${isAdmin() ? `<button class="btn btn-navy btn-sm" data-action="admin-go-add" style="white-space:nowrap;">${window.EpiIcons.get('plus', 14)} <span class="hide-sm">Ajouter un cours</span></button>` : ''}
+        ${isAdmin() ? `<button class="btn btn-navy btn-sm topbar-add-btn" data-action="admin-go-add" aria-label="Ajouter un cours" title="Ajouter un cours" style="white-space:nowrap;">${window.EpiIcons.get('plus', 15)}<span class="hide-sm"> Ajouter un cours</span></button>` : ''}
         <div class="stat-pill streak" title="Série quotidienne">${window.EpiIcons.get('flame', 15)} <strong>${profile.streak.count} j</strong> <span class="hide-sm">série</span></div>
         <div class="stat-pill xp" title="Points d'expérience">${window.EpiIcons.get('award', 15)} <strong>${profile.xp} XP</strong> <span class="hide-sm">· Niv. ${lvl.current.level}</span></div>
+        <button class="icon-btn" data-action="toggle-theme" aria-label="Changer de thème" title="${state.theme === 'dark' ? 'Passer en mode clair' : 'Passer en mode sombre'}">
+          ${window.EpiIcons.get(state.theme === 'dark' ? 'sun' : 'moon', 17)}
+        </button>
         <button class="icon-btn" data-action="open-notifications" aria-label="Rappels de révision" title="Rappels internes">
           ${window.EpiIcons.get('bell', 18)}
           ${(rev.urgentCount + updatedCount) > 0 ? '<span class="dot-alert"></span>' : ''}
@@ -662,20 +756,52 @@ window.EpiApp = (function () {
 
       if (kind === 'admin-create-course') {
         const moduleId = state.adminState.addWizard.selectedModuleId || String(fd.get('moduleId') || '');
+        const semester = String(fd.get('semester') || '').trim();
+        const tagsRaw = String(fd.get('tags') || '').trim();
         const payload = {
           moduleId,
           title: String(fd.get('title') || '').trim(),
           code: String(fd.get('code') || '').trim(),
+          academicYear: String(fd.get('academicYear') || '').trim(),
           professor: String(fd.get('professor') || '').trim(),
           priority: String(fd.get('priority') || 'medium'),
-          summary: String(fd.get('summary') || '').trim()
+          summary: String(fd.get('summary') || '').trim(),
+          metadata: {
+            semester,
+            tags: tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : []
+          }
         };
-        const res = await window.EpiAPI.createCourse(payload);
-        await refreshCatalogsOnly();
-        state.adminState.addWizard.createdCourseId = res.course.id;
-        state.adminState.addWizard.showNewModule = false;
-        window.EpiUI.toast('Brouillon créé ! Téléversez maintenant votre ou vos PDF de cours.', 'success');
+        const pendingPrimary = window.EpiUI.asArr(state.adminState.addWizard.pendingFiles);
+        const pendingSupport = window.EpiUI.asArr(state.adminState.addWizard.pendingSupportFiles);
+
+        state.adminState.addWizard.uploading = pendingPrimary.length > 0 || pendingSupport.length > 0;
         render();
+
+        const res = await window.EpiAPI.createCourse(payload);
+        const cid = res.course.id;
+        state.adminState.addWizard.createdCourseId = cid;
+        state.adminState.addWizard.showNewModule = false;
+        state.adminState.addWizard.pendingFiles = [];
+        state.adminState.addWizard.pendingSupportFiles = [];
+
+        let uploadedPrimary = 0;
+        for (const f of pendingPrimary) {
+          await window.EpiAPI.uploadCourseFile(cid, f, 'primary_source');
+          uploadedPrimary++;
+        }
+        for (const f of pendingSupport) {
+          await window.EpiAPI.uploadCourseFile(cid, f, 'support_doc');
+        }
+        state.adminState.addWizard.uploading = false;
+        await refreshCatalogsOnly();
+        render();
+
+        if (uploadedPrimary > 0) {
+          window.EpiUI.toast('Brouillon créé & fichier téléversé — lancement du Pipeline 11 étapes…', 'success');
+          await runUniversalImportPipeline(cid);
+        } else {
+          window.EpiUI.toast('Brouillon créé ! Téléversez maintenant votre fichier PDF ou PowerPoint.', 'success');
+        }
         return;
       }
 
@@ -761,7 +887,11 @@ window.EpiApp = (function () {
       state.route = 'dashboard';
       state.adminState.editor = null;
       state.runtime = {
-        flashcard: { idx: 0, revealed: false, draft: '' },
+        activeSubStepId: null,
+        courseLessonsNavOpen: false,
+        phaseStepsCollapsed: false,
+        activeRecall: {},
+        flashcard: { cardId: null, revealed: false, draft: '' },
         lessonQcms: {},
         arenaQcms: {},
         miniTest: { answers: {}, submitted: false, scorePct: 0, correctCount: 0, newlyMastered: false },
@@ -776,6 +906,15 @@ window.EpiApp = (function () {
 
     try {
       switch (action) {
+        case 'toggle-theme':
+          state.theme = window.EpiStorage.setTheme(state.theme === 'dark' ? 'light' : 'dark');
+          if (profile) {
+            profile.theme = state.theme;
+            window.EpiStorage.syncNow();
+          }
+          render();
+          break;
+
         case 'toggle-sidebar':
           state.sidebarOpen = !state.sidebarOpen;
           render();
@@ -797,7 +936,10 @@ window.EpiApp = (function () {
               showNewModule: false,
               selectedModuleId: (state.adminData.modules[0] && state.adminData.modules[0].id) || '',
               analyzing: false,
-              uploading: false
+              uploading: false,
+              pendingFiles: [],
+              pendingSupportFiles: [],
+              activeJob: null
             };
           }
           render();
@@ -813,7 +955,10 @@ window.EpiApp = (function () {
             showNewModule: false,
             selectedModuleId: (state.adminData.modules[0] && state.adminData.modules[0].id) || '',
             analyzing: false,
-            uploading: false
+            uploading: false,
+            pendingFiles: [],
+            pendingSupportFiles: [],
+            activeJob: null
           };
           state.route = 'admin_add';
           state.sidebarOpen = false;
@@ -879,11 +1024,17 @@ window.EpiApp = (function () {
           if (!isAdmin()) return;
           const cid = btn.getAttribute('data-course');
           const lid = btn.getAttribute('data-lesson');
+          const reqStep = btn.getAttribute('data-step') || 'A';
+          const reqSub = btn.getAttribute('data-substep') || null;
           state.courseId = cid;
           state.lessonId = lid;
-          state.lessonStep = btn.getAttribute('data-step') || 'A';
+          state.lessonStep = reqStep;
           state.route = 'admin_preview_lesson';
-          state.runtime.flashcard = { idx: 0, revealed: false, draft: '' };
+          state.runtime.courseLessonsNavOpen = false;
+          state.runtime.phaseStepsCollapsed = false;
+          state.runtime.activeRecall = {};
+          state.runtime.activeSubStepId = reqSub;
+          state.runtime.flashcard = { cardId: null, revealed: false, draft: '' };
           state.runtime.lessonQcms = {};
           state.runtime.miniTest = { answers: {}, submitted: false, scorePct: 0, correctCount: 0, newlyMastered: false };
           render();
@@ -961,25 +1112,100 @@ window.EpiApp = (function () {
           }
           break;
 
+        case 'admin-start-pipeline':
         case 'admin-analyze-course': {
           const cid = btn.getAttribute('data-cid');
           const existing = state.adminData.courses.find(c => c.id === cid);
           if (existing && window.EpiUI.asArr(existing.lessons).length > 0) {
-            if (!window.confirm('Relancer « Analyser le cours avec l’IA » remplacera les brouillons actuels de leçons, flashcards et QCM de ce cours (une sauvegarde automatique est créée avant). Continuer ?')) return;
+            if (!window.confirm('Relancer le pipeline universel en 11 étapes remplacera les brouillons actuels de leçons, flashcards, QCM et mini-tests de ce cours (une sauvegarde automatique est créée avant). Continuer ?')) return;
           }
-          if (state.route === 'admin_add') state.adminState.addWizard.analyzing = true;
-          if (state.adminState.editor) state.adminState.editor.analyzing = true;
-          render();
+          await runUniversalImportPipeline(cid);
+          break;
+        }
+
+        case 'admin-retry-job-stage': {
+          const jid = btn.getAttribute('data-jid');
+          const st = Number(btn.getAttribute('data-stage')) || 1;
+          const jobRef = (state.adminState.addWizard && state.adminState.addWizard.activeJob && state.adminState.addWizard.activeJob.id === jid && state.adminState.addWizard.activeJob)
+            || (state.adminState.editor && state.adminState.editor.activeJob && state.adminState.editor.activeJob.id === jid && state.adminState.editor.activeJob)
+            || state.adminData.importJobs.find(j => j.id === jid);
+          if (!jobRef) return;
+          await runUniversalImportPipeline(jobRef.courseId, jid, st);
+          break;
+        }
+
+        case 'admin-regenerate-lesson': {
+          const cid = btn.getAttribute('data-cid');
+          const lid = btn.getAttribute('data-lid');
+          if (!window.confirm('Régénérer uniquement cette section/leçon (Comprendre, À mémoriser, Rappel actif, Flashcards, QCM & Mini-test) ? Les autres leçons restent intactes.')) return;
+          if (state.adminState.editor) { state.adminState.editor.regenerating = true; render(); }
           try {
-            const res = await window.EpiAPI.analyzeCourse(cid);
+            await window.EpiAPI.regenerateLesson(cid, lid);
             await refreshCatalogsOnly();
-            state.adminState.addWizard.analyzing = false;
-            window.EpiUI.toast(`Extraction IA terminée : ${res.aiExtraction.lessonsExtracted} chapitre(s), ${res.aiExtraction.flashcardsCreated} flashcard(s), ${res.aiExtraction.qcmsCreated} QCM (en brouillon à relire).`, 'success');
-            openCourseInEditor(cid, 'lessons');
+            const activeTab = (state.adminState.editor && state.adminState.editor.tab) || 'lessons';
+            const prevIdx = (state.adminState.editor && state.adminState.editor.activeLessonIdx) || 0;
+            openCourseInEditor(cid, activeTab);
+            if (state.adminState.editor) {
+              state.adminState.editor.activeLessonIdx = Math.min(prevIdx, Math.max(0, state.adminState.editor.course.lessons.length - 1));
+              render();
+            }
+            window.EpiUI.toast('Section régénérée et contrôle qualité mis à jour.', 'success');
           } catch (err) {
-            state.adminState.addWizard.analyzing = false;
-            if (state.adminState.editor) state.adminState.editor.analyzing = false;
-            window.EpiUI.toast(err.message || 'Échec de l’analyse PDF.', 'warning');
+            if (state.adminState.editor) state.adminState.editor.regenerating = false;
+            window.EpiUI.toast(err.message || 'Échec de la régénération.', 'warning');
+            render();
+          }
+          break;
+        }
+
+        case 'admin-run-quality-check': {
+          const ed = state.adminState.editor;
+          const cid = btn.getAttribute('data-cid') || (ed && ed.course && ed.course.id);
+          if (!cid) return;
+          const res = await window.EpiAPI.runQualityCheck(cid, ed ? { course: ed.course, flashcards: ed.flashcards, qcms: ed.qcms } : {});
+          if (ed) {
+            ed.qualityReport = res.qualityReport;
+            ed.tab = 'quality';
+          }
+          window.EpiUI.toast(`Audit qualité terminé : ${res.qualityReport.score}/100 (${res.qualityReport.blockingCount} blocage(s), ${res.qualityReport.warningCount} alerte(s)).`, res.qualityReport.blockingCount > 0 ? 'warning' : 'success');
+          render();
+          break;
+        }
+
+        case 'admin-approve-publish': {
+          const ed = state.adminState.editor;
+          const cid = btn.getAttribute('data-cid') || (ed && ed.course && ed.course.id);
+          if (!cid) return;
+          if (ed && ed.course.lessons.length === 0) {
+            window.EpiUI.toast('Ajoutez au moins une leçon avant de publier ce cours.', 'warning');
+            return;
+          }
+          if (ed) { ed.saving = true; render(); }
+          try {
+            if (ed) {
+              const draftPayload = JSON.parse(JSON.stringify(ed.course));
+              draftPayload.status = 'draft';
+              await window.EpiAPI.updateCourse(cid, {
+                course: draftPayload,
+                flashcards: ed.flashcards,
+                qcms: ed.qcms,
+                majorLessonIds: ed.majorLessonIds || [],
+                publish: false
+              });
+            }
+            const appRes = await window.EpiAPI.approveCourse(cid, true, false);
+            await refreshCatalogsOnly();
+            openCourseInEditor(cid, 'lessons');
+            window.EpiUI.toast(`🚀 Cours approuvé (Qualité ${appRes.qualityReport ? appRes.qualityReport.score + '/100' : 'OK'}) et publié pour les étudiants !`, 'success');
+          } catch (err) {
+            if (ed) {
+              ed.saving = false;
+              if (err.data && err.data.qualityReport) {
+                ed.qualityReport = err.data.qualityReport;
+                ed.tab = 'quality';
+              }
+            }
+            window.EpiUI.toast(err.message || 'Publication bloquée par le contrôle qualité.', 'warning');
             render();
           }
           break;
@@ -1194,6 +1420,81 @@ window.EpiApp = (function () {
           break;
         }
 
+        case 'admin-ed-add-section': {
+          const ed = state.adminState.editor;
+          const lidx = Number(btn.getAttribute('data-lidx'));
+          const lesson = ed && ed.course.lessons[lidx];
+          if (!lesson) return;
+          if (!lesson.understand) lesson.understand = { intro: '', sections: [], tables: [], darija: '', triad: { toUnderstand: [], toMemorize: [], toRecognizeInQcm: [] } };
+          if (!Array.isArray(lesson.understand.sections)) lesson.understand.sections = [];
+          lesson.understand.sections.push({
+            heading: `Nouvelle sous-section ${lesson.understand.sections.length + 1}`,
+            pageRef: lesson.slideRange || '',
+            provenance: 'source_explicit',
+            paragraphs: [],
+            bullets: []
+          });
+          ed.dirty = true;
+          render();
+          break;
+        }
+
+        case 'admin-ed-del-section': {
+          const ed = state.adminState.editor;
+          const lidx = Number(btn.getAttribute('data-lidx'));
+          const sidx = Number(btn.getAttribute('data-sidx'));
+          const lesson = ed && ed.course.lessons[lidx];
+          if (!lesson || !lesson.understand || !Array.isArray(lesson.understand.sections)) return;
+          if (lesson.understand.sections.length <= 1) return;
+          lesson.understand.sections.splice(sidx, 1);
+          ed.dirty = true;
+          render();
+          break;
+        }
+
+        case 'admin-ed-del-table': {
+          const ed = state.adminState.editor;
+          const lidx = Number(btn.getAttribute('data-lidx'));
+          const tidx = Number(btn.getAttribute('data-tidx'));
+          const lesson = ed && ed.course.lessons[lidx];
+          if (!lesson || !lesson.understand || !Array.isArray(lesson.understand.tables)) return;
+          lesson.understand.tables.splice(tidx, 1);
+          ed.dirty = true;
+          render();
+          break;
+        }
+
+        case 'admin-ed-add-recall': {
+          const ed = state.adminState.editor;
+          const lidx = Number(btn.getAttribute('data-lidx'));
+          const lesson = ed && ed.course.lessons[lidx];
+          if (!lesson) return;
+          if (!Array.isArray(lesson.activeRecall)) lesson.activeRecall = [];
+          lesson.activeRecall.push({
+            id: `AR_${lesson.id}_${Date.now().toString(36).slice(-4)}`,
+            prompt: '',
+            expectedAnswer: '',
+            pageRef: lesson.slideRange || '',
+            sourceFile: lesson.sourceFile || '',
+            provenance: 'ai_reformulated'
+          });
+          ed.dirty = true;
+          render();
+          break;
+        }
+
+        case 'admin-ed-del-recall': {
+          const ed = state.adminState.editor;
+          const lidx = Number(btn.getAttribute('data-lidx'));
+          const ridx = Number(btn.getAttribute('data-ridx'));
+          const lesson = ed && ed.course.lessons[lidx];
+          if (!lesson || !Array.isArray(lesson.activeRecall)) return;
+          lesson.activeRecall.splice(ridx, 1);
+          ed.dirty = true;
+          render();
+          break;
+        }
+
         case 'admin-ed-add-fc': {
           const ed = state.adminState.editor;
           if (!ed || !ed.course.lessons.length) return;
@@ -1372,7 +1673,7 @@ window.EpiApp = (function () {
           break;
         }
 
-        // ---- ACTIONS ÉTUDIANTES EXISTANTES ----
+        // ---- ACTIONS ÉTUDIANTES EXISTANTES & PARCOURS UNIFIÉ ----
         case 'hero-go': {
           const r = btn.getAttribute('data-route');
           if (btn.getAttribute('data-start-session') === '1') {
@@ -1380,7 +1681,12 @@ window.EpiApp = (function () {
           } else if (btn.getAttribute('data-start-exam')) {
             startExamSimulation(btn.getAttribute('data-start-exam'));
           } else if (r === 'lesson') {
-            openLesson(btn.getAttribute('data-course'), btn.getAttribute('data-lesson'), btn.getAttribute('data-step') || 'A');
+            openLesson(
+              btn.getAttribute('data-course'),
+              btn.getAttribute('data-lesson'),
+              btn.getAttribute('data-step') || null,
+              btn.getAttribute('data-substep') || null
+            );
           } else {
             state.route = r || 'courses';
             render();
@@ -1398,18 +1704,180 @@ window.EpiApp = (function () {
           break;
 
         case 'go-lesson':
-          openLesson(btn.getAttribute('data-course'), btn.getAttribute('data-lesson'), btn.getAttribute('data-step') || 'A');
+          openLesson(
+            btn.getAttribute('data-course'),
+            btn.getAttribute('data-lesson'),
+            btn.getAttribute('data-step') || null,
+            btn.getAttribute('data-substep') || null
+          );
+          break;
+
+        case 'toggle-course-lessons-nav':
+          state.runtime.courseLessonsNavOpen = !state.runtime.courseLessonsNavOpen;
+          render();
+          break;
+
+        case 'toggle-phase-steps-list':
+          state.runtime.phaseStepsCollapsed = !state.runtime.phaseStepsCollapsed;
+          render();
           break;
 
         case 'lesson-step': {
-          const nextStep = btn.getAttribute('data-step');
-          state.lessonStep = nextStep;
-          if (nextStep === 'C') state.runtime.flashcard = { idx: 0, revealed: false, draft: '' };
-          const lRec = window.EpiStorage.ensureLessonRecord(profile, state.lessonId);
-          if (nextStep === 'A') lRec.stepAVisited = true;
-          window.EpiStorage.save();
+          const nextPhaseKey = btn.getAttribute('data-step') || 'A';
+          const cat = getActiveCatalog();
+          const pair = findLesson(state.lessonId, cat);
+          state.lessonStep = nextPhaseKey;
+          state.runtime.phaseStepsCollapsed = false;
+          state.runtime.flashcard = { cardId: null, revealed: false, draft: '' };
+
+          if (pair) {
+            const lj = window.EpiJourney.getLessonJourney(profile, pair.course, pair.lesson, {
+              catalog: cat,
+              runtime: state.runtime,
+              activePhaseKey: nextPhaseKey
+            });
+            const phase = lj.phases.find(p => p.key === nextPhaseKey);
+            const lRec = profile.lessons[pair.lesson.id];
+            const savedId = lRec && lRec.lastActiveStepByPhase && lRec.lastActiveStepByPhase[nextPhaseKey];
+            const pick = phase && phase.steps.length
+              ? (phase.steps.find(s => s.id === savedId) || phase.nextStep || phase.steps[0])
+              : null;
+            state.runtime.activeSubStepId = pick ? pick.id : null;
+          }
+          // RÈGLE STRICTE : cliquer sur un bouton de navigation NE valide aucune phase ni étape !
           render();
           window.scrollTo({ top: 0, behavior: 'smooth' });
+          break;
+        }
+
+        case 'lesson-select-substep': {
+          const phaseKey = btn.getAttribute('data-phase') || state.lessonStep || 'A';
+          const subStepId = btn.getAttribute('data-substep') || null;
+          state.lessonStep = phaseKey;
+          state.runtime.activeSubStepId = subStepId;
+          if (phaseKey === 'C') {
+            state.runtime.flashcard = { cardId: subStepId, revealed: false, draft: '' };
+          }
+          // Mémoriser le repère de navigation SANS marquer l'étape terminée ni étudiée
+          if (!state.route.startsWith('admin_preview_') && state.lessonId && profile.lessons[state.lessonId]) {
+            const lRec = window.EpiStorage.ensureLessonRecord(profile, state.lessonId);
+            lRec.lastActivePhase = phaseKey;
+            if (subStepId) lRec.lastActiveStepByPhase[phaseKey] = subStepId;
+            window.EpiStorage.save();
+          }
+          render();
+          const ws = document.querySelector('.j-workspace-card');
+          if (ws) ws.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          break;
+        }
+
+        case 'complete-understand-step': {
+          const lid = btn.getAttribute('data-lesson') || state.lessonId;
+          const sid = btn.getAttribute('data-stepid');
+          if (!lid || !sid) break;
+          const cat = getActiveCatalog();
+          const pair = findLesson(lid, cat);
+          if (!pair) break;
+
+          if (state.route.startsWith('admin_preview_')) {
+            window.EpiUI.toast('Mode prévisualisation : validation non enregistrée.');
+            break;
+          }
+
+          const lRec = window.EpiStorage.ensureLessonRecord(profile, lid);
+          const isNew = !lRec.understandCompletedIds.includes(sid);
+          if (isNew) {
+            lRec.understandCompletedIds.push(sid);
+            lRec.lastStudiedAt = new Date().toISOString();
+            if (lRec.status === 'not_started') {
+              lRec.status = 'in_progress';
+              lRec.seenRevisionVersion = Number(pair.lesson.revisionVersion) || 1;
+            }
+            const log = window.EpiStorage.ensureDailyLog(profile);
+            if (!log.lessonsStudied.includes(lid)) log.lessonsStudied.push(lid);
+            notifyBadges(window.EpiGamification.awardXP(profile, 6));
+          }
+
+          const lj = window.EpiJourney.syncDerivedLessonFlags(profile, pair.course, pair.lesson, cat);
+          const pA = lj.phases.find(p => p.key === 'A');
+          lRec.lastActivePhase = 'A';
+
+          if (pA && pA.isCompleted) {
+            lRec.stepAVisited = true;
+            if (isNew) notifyBadges(window.EpiGamification.awardXP(profile, 10));
+            window.EpiUI.toast('✅ Phase « À comprendre » terminée ! Passez maintenant à la phase suivante.', 'success');
+          } else if (pA && pA.nextStep) {
+            state.runtime.activeSubStepId = pA.nextStep.id;
+            lRec.lastActiveStepByPhase.A = pA.nextStep.id;
+            window.EpiUI.toast(`Étape validée (${pA.completedCount}/${pA.totalCount}) — continuez avec l’étape ${pA.nextStep.number}.`, 'success');
+          }
+
+          window.EpiStorage.syncNow();
+          render();
+          const ws = document.querySelector('.j-workspace-card');
+          if (ws) ws.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          break;
+        }
+
+        case 'uncomplete-understand-step': {
+          const lid = btn.getAttribute('data-lesson') || state.lessonId;
+          const sid = btn.getAttribute('data-stepid');
+          if (!lid || !sid || state.route.startsWith('admin_preview_')) break;
+          const cat = getActiveCatalog();
+          const pair = findLesson(lid, cat);
+          const lRec = window.EpiStorage.ensureLessonRecord(profile, lid);
+          lRec.understandCompletedIds = lRec.understandCompletedIds.filter(x => x !== sid);
+          lRec.stepProgressVersion = 2;
+          lRec.stepAVisited = false;
+          if (pair) window.EpiJourney.syncDerivedLessonFlags(profile, pair.course, pair.lesson, cat);
+          window.EpiStorage.syncNow();
+          window.EpiUI.toast('Validation de l’étape retirée.');
+          render();
+          break;
+        }
+
+        case 'ar-reveal': {
+          const arid = btn.getAttribute('data-arid');
+          if (!arid) break;
+          if (!state.runtime.activeRecall[arid]) state.runtime.activeRecall[arid] = { revealed: false, draft: '' };
+          state.runtime.activeRecall[arid].revealed = true;
+          render();
+          break;
+        }
+
+        case 'complete-ar-step': {
+          const lid = btn.getAttribute('data-lesson') || state.lessonId;
+          const arid = btn.getAttribute('data-arid');
+          if (!lid || !arid) break;
+          const cat = getActiveCatalog();
+          const pair = findLesson(lid, cat);
+          if (!pair) break;
+          if (state.route.startsWith('admin_preview_')) {
+            window.EpiUI.toast('Mode prévisualisation : validation non enregistrée.');
+            break;
+          }
+          const lRec = window.EpiStorage.ensureLessonRecord(profile, lid);
+          if (!lRec.activeRecallDoneIds.includes(arid)) {
+            lRec.activeRecallDoneIds.push(arid);
+            lRec.lastStudiedAt = new Date().toISOString();
+            if (lRec.status === 'not_started') {
+              lRec.status = 'in_progress';
+              lRec.seenRevisionVersion = Number(pair.lesson.revisionVersion) || 1;
+            }
+            notifyBadges(window.EpiGamification.awardXP(profile, 6));
+          }
+          const lj = window.EpiJourney.syncDerivedLessonFlags(profile, pair.course, pair.lesson, cat);
+          const pAR = lj.phases.find(p => p.key === 'AR');
+          lRec.lastActivePhase = 'AR';
+          if (pAR && pAR.isCompleted) {
+            window.EpiUI.toast('✅ Phase « Active Recall » terminée ! Passez maintenant aux Flashcards.', 'success');
+          } else if (pAR && pAR.nextStep) {
+            state.runtime.activeSubStepId = pAR.nextStep.id;
+            lRec.lastActiveStepByPhase.AR = pAR.nextStep.id;
+            window.EpiUI.toast(`Activité validée (${pAR.completedCount}/${pAR.totalCount}) — continuez avec l’activité ${pAR.nextStep.number}.`, 'success');
+          }
+          window.EpiStorage.syncNow();
+          render();
           break;
         }
 
@@ -1465,19 +1933,45 @@ window.EpiApp = (function () {
         case 'toggle-mem-item': {
           const lid = btn.getAttribute('data-lesson');
           const mid = btn.getAttribute('data-mid');
+          const shouldAdvance = btn.getAttribute('data-advance') === '1';
+          if (state.route.startsWith('admin_preview_')) {
+            window.EpiUI.toast('Mode prévisualisation : validation non enregistrée.');
+            break;
+          }
+          const cat = getActiveCatalog();
+          const pair = findLesson(lid, cat);
           const lRec = window.EpiStorage.ensureLessonRecord(profile, lid);
           const idx = lRec.memCheckedIds.indexOf(mid);
           if (idx >= 0) {
             lRec.memCheckedIds.splice(idx, 1);
+            lRec.memDeclaredAll = false;
           } else {
             lRec.memCheckedIds.push(mid);
+            lRec.lastStudiedAt = new Date().toISOString();
+            if (lRec.status === 'not_started') {
+              lRec.status = 'in_progress';
+              if (pair) lRec.seenRevisionVersion = Number(pair.lesson.revisionVersion) || 1;
+            }
             const log = window.EpiStorage.ensureDailyLog(profile);
             if (!log.memItems.includes(mid)) {
               log.memItems.push(mid);
               notifyBadges(window.EpiGamification.awardXP(profile, 5));
             }
           }
-          window.EpiStorage.save();
+          if (pair) {
+            const lj = window.EpiJourney.syncDerivedLessonFlags(profile, pair.course, pair.lesson, cat);
+            const pB = lj.phases.find(p => p.key === 'B');
+            lRec.lastActivePhase = 'B';
+            if (pB && pB.isCompleted) {
+              lRec.memDeclaredAll = true;
+              window.EpiUI.toast('✅ Phase « À mémoriser » terminée ! Passez maintenant à la phase suivante.', 'success');
+            } else if (shouldAdvance && pB && pB.nextStep) {
+              state.runtime.activeSubStepId = pB.nextStep.id;
+              lRec.lastActiveStepByPhase.B = pB.nextStep.id;
+              window.EpiUI.toast(`Notion mémorisée (${pB.completedCount}/${pB.totalCount}) — continuez avec la notion ${pB.nextStep.number}.`, 'success');
+            }
+          }
+          window.EpiStorage.syncNow();
           render();
           break;
         }
@@ -1494,30 +1988,42 @@ window.EpiApp = (function () {
               if (!log.memItems.includes(m.id)) log.memItems.push(m.id);
             });
             notifyBadges(window.EpiGamification.awardXP(profile, 10));
-            window.EpiUI.toast('Section marquée mémorisée — vérifiez-la maintenant avec les flashcards (Étape C) !');
+            window.EpiUI.toast('Section marquée mémorisée — vérifiez-la maintenant avec les flashcards !');
           }
-          window.EpiStorage.save();
+          window.EpiStorage.syncNow();
           render();
           break;
         }
 
-        case 'fc-jump':
-          state.runtime.flashcard = { idx: Number(btn.getAttribute('data-idx')) || 0, revealed: false, draft: '' };
+        case 'fc-jump': {
+          const jumpIdx = Number(btn.getAttribute('data-idx')) || 0;
+          const cards = window.EpiUI.asArr(getActiveCatalog().flashcards).filter(f => f.lessonId === state.lessonId);
+          const targetCard = cards[jumpIdx];
+          state.runtime.activeSubStepId = targetCard ? targetCard.id : null;
+          state.runtime.flashcard = { cardId: targetCard ? targetCard.id : null, revealed: false, draft: '' };
           render();
           break;
+        }
 
-        case 'fc-reveal':
-          state.runtime.flashcard.revealed = true;
+        case 'fc-reveal': {
+          const cid = btn.getAttribute('data-cid') || state.runtime.activeSubStepId;
+          state.runtime.flashcard = { cardId: cid, revealed: true, draft: state.runtime.flashcard.draft || '' };
           render();
           break;
+        }
 
         case 'fc-rate': {
           const cid = btn.getAttribute('data-cid');
           const rating = btn.getAttribute('data-rating');
+          const cat = getActiveCatalog();
+          const pair = findLesson(state.lessonId, cat);
+
           if (state.route.startsWith('admin_preview_')) {
-            const cards = window.EpiUI.asArr(getActiveCatalog().flashcards).filter(f => f.lessonId === state.lessonId);
-            const nextIdx = cards.length ? (state.runtime.flashcard.idx + 1) % cards.length : 0;
-            state.runtime.flashcard = { idx: nextIdx, revealed: false, draft: '' };
+            const cards = window.EpiUI.asArr(cat.flashcards).filter(f => f.lessonId === state.lessonId);
+            const curI = cards.findIndex(c => c.id === cid);
+            const nextC = cards[(curI + 1) % Math.max(1, cards.length)];
+            state.runtime.activeSubStepId = nextC ? nextC.id : null;
+            state.runtime.flashcard = { cardId: nextC ? nextC.id : null, revealed: false, draft: '' };
             window.EpiUI.toast('Mode aperçu : carte suivante affichée (progression non modifiée).');
             render();
             break;
@@ -1528,9 +2034,15 @@ window.EpiApp = (function () {
           const xp = rating === 'knew' ? 8 : (rating === 'partial' ? 4 : 2);
           notifyBadges(window.EpiGamification.awardXP(profile, xp));
 
-          const pair = findLesson(state.lessonId);
+          let nextCardId = null;
+          let phaseCCompleted = false;
           if (pair) {
             const lRec = window.EpiStorage.ensureLessonRecord(profile, pair.lesson.id);
+            lRec.lastStudiedAt = new Date().toISOString();
+            if (lRec.status === 'not_started') {
+              lRec.status = 'in_progress';
+              lRec.seenRevisionVersion = Number(pair.lesson.revisionVersion) || 1;
+            }
             if (!lRec.mastered && lRec.miniTestBest !== null && lRec.miniTestBest >= 80 && window.EpiSRS.hasCompletedMemorizationEvidence(profile, pair.lesson)) {
               lRec.mastered = true;
               lRec.studied = true;
@@ -1540,16 +2052,31 @@ window.EpiApp = (function () {
               window.EpiSRS.scheduleLessonAfterMastery(profile, pair.lesson.id);
               window.EpiUI.toast('🎉 Leçon désormais MAÎTRISÉE et planifiée en répétition espacée (J+1) !', 'success');
             }
+            const lj = window.EpiJourney.syncDerivedLessonFlags(profile, pair.course, pair.lesson, cat);
+            const pC = lj.phases.find(p => p.key === 'C');
+            if (pC) {
+              phaseCCompleted = pC.isCompleted;
+              if (pC.nextStep) {
+                nextCardId = pC.nextStep.id;
+                lRec.lastActiveStepByPhase.C = nextCardId;
+              }
+            }
+            lRec.lastActivePhase = 'C';
           }
 
-          window.EpiStorage.save();
-          const cards = window.EpiData.flashcards.filter(f => f.lessonId === state.lessonId);
-          const nextIdx = cards.length ? (state.runtime.flashcard.idx + 1) % cards.length : 0;
-          state.runtime.flashcard = { idx: nextIdx, revealed: false, draft: '' };
-          const msg = rating === 'knew'
-            ? `Bravo ! Prochaine révision programmée dans ${rec.intervalDays} jour(s).`
-            : (rating === 'partial' ? 'Noté partiel — carte ramenée dès demain (J+1).' : 'Ajoutée à vos concepts oubliés & points faibles pour révision immédiate.');
-          window.EpiUI.toast(msg, rating === 'knew' ? 'success' : 'warning');
+          window.EpiStorage.syncNow();
+          if (nextCardId) {
+            state.runtime.activeSubStepId = nextCardId;
+            state.runtime.flashcard = { cardId: nextCardId, revealed: false, draft: '' };
+          } else {
+            state.runtime.flashcard = { cardId: cid, revealed: false, draft: '' };
+          }
+          const msg = phaseCCompleted
+            ? '✅ Toutes les flashcards de la leçon sont évaluées ! Passez maintenant à l’entraînement QCM.'
+            : (rating === 'knew'
+              ? `Bravo ! Prochaine révision programmée dans ${rec.intervalDays} jour(s).`
+              : (rating === 'partial' ? 'Noté partiel — carte ramenée dès demain (J+1).' : 'Ajoutée à vos concepts oubliés & points faibles pour révision immédiate.'));
+          window.EpiUI.toast(msg, (phaseCCompleted || rating === 'knew') ? 'success' : 'warning');
           render();
           break;
         }
@@ -1611,7 +2138,24 @@ window.EpiApp = (function () {
             log.qcmsDone += 1;
             if (isCorrect) log.qcmsCorrect += 1;
             notifyBadges(window.EpiGamification.awardXP(profile, isCorrect ? 12 : 3));
-            window.EpiStorage.save();
+            if (prefix === 'lessonq' && state.lessonId) {
+              const pair = findLesson(state.lessonId);
+              if (pair) {
+                const lRec = window.EpiStorage.ensureLessonRecord(profile, pair.lesson.id);
+                lRec.lastStudiedAt = new Date().toISOString();
+                if (lRec.status === 'not_started') {
+                  lRec.status = 'in_progress';
+                  lRec.seenRevisionVersion = Number(pair.lesson.revisionVersion) || 1;
+                }
+                const lj = window.EpiJourney.syncDerivedLessonFlags(profile, pair.course, pair.lesson, window.EpiData);
+                const pD = lj.phases.find(p => p.key === 'D');
+                lRec.lastActivePhase = 'D';
+                if (pD && pD.isCompleted) {
+                  window.EpiUI.toast('✅ Phase « Entraînement QCM » terminée ! Passez maintenant au Mini-test.', 'success');
+                }
+              }
+            }
+            window.EpiStorage.syncNow();
           }
           render();
           break;
@@ -1621,6 +2165,13 @@ window.EpiApp = (function () {
           state.runtime.lessonQcms = {};
           render();
           break;
+
+        case 'lesson-qcm-reset-one': {
+          const qid = btn.getAttribute('data-qid');
+          if (qid && state.runtime.lessonQcms[qid]) delete state.runtime.lessonQcms[qid];
+          render();
+          break;
+        }
 
         case 'minitest-submit': {
           const cat = getActiveCatalog();
@@ -1659,8 +2210,10 @@ window.EpiApp = (function () {
           lRec.miniTestAttempts += 1;
           lRec.lastMiniTestScore = scorePct;
           lRec.studied = true;
-          lRec.stepAVisited = true;
           lRec.lastStudiedAt = new Date().toISOString();
+          lRec.lastActivePhase = 'E';
+          lRec.lastActiveStepByPhase.E = 'mt_validate';
+          state.runtime.activeSubStepId = 'mt_validate';
           if (lRec.miniTestBest === null || scorePct > lRec.miniTestBest) lRec.miniTestBest = scorePct;
           if (!log.lessonsStudied.includes(pair.lesson.id)) log.lessonsStudied.push(pair.lesson.id);
 
@@ -1676,8 +2229,9 @@ window.EpiApp = (function () {
             lessonId: pair.lesson.id
           });
 
+          const passingScore = (pair.lesson.miniTest && pair.lesson.miniTest.passingScore) || 80;
           const memOk = window.EpiSRS.hasCompletedMemorizationEvidence(profile, pair.lesson);
-          if (scorePct >= 80 && memOk) {
+          if (scorePct >= passingScore && memOk) {
             lRec.mastered = true;
             lRec.status = 'completed';
             lRec.masteredAt = lRec.masteredAt || new Date().toISOString();
@@ -1691,17 +2245,23 @@ window.EpiApp = (function () {
             notifyBadges(window.EpiGamification.awardXP(profile, 15));
           }
 
-          window.EpiStorage.save();
+          window.EpiJourney.syncDerivedLessonFlags(profile, pair.course, pair.lesson, cat);
+          window.EpiStorage.syncNow();
           render();
           window.scrollTo({ top: 0, behavior: 'smooth' });
           break;
         }
 
-        case 'minitest-retry':
+        case 'minitest-retry': {
           state.runtime.miniTest = { answers: {}, submitted: false, scorePct: 0, correctCount: 0, newlyMastered: false };
+          const cat = getActiveCatalog();
+          const pair = findLesson(state.lessonId, cat);
+          const qs = pair ? window.EpiViewsLesson.getMiniTestQuestions(pair.course, pair.lesson, cat) : [];
+          state.runtime.activeSubStepId = qs[0] ? `mtq_${qs[0].id}` : 'mt_validate';
           render();
           window.scrollTo({ top: 0, behavior: 'smooth' });
           break;
+        }
 
         case 'srs-start-session':
           startRevisionSession(btn.getAttribute('data-mode'));
@@ -1944,6 +2504,33 @@ window.EpiApp = (function () {
       return true;
     }
 
+    const secField = el.getAttribute('data-ed-sec');
+    if (secField) {
+      const lidx = Number(el.getAttribute('data-lidx'));
+      const sidx = Number(el.getAttribute('data-sidx'));
+      const lesson = ed.course.lessons[lidx];
+      if (lesson && lesson.understand && Array.isArray(lesson.understand.sections) && lesson.understand.sections[sidx]) {
+        const splitLines = (v) => String(v || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        if (secField === 'heading') lesson.understand.sections[sidx].heading = el.value;
+        else if (secField === 'paragraphs') lesson.understand.sections[sidx].paragraphs = splitLines(el.value);
+        else if (secField === 'bullets') lesson.understand.sections[sidx].bullets = splitLines(el.value);
+        ed.dirty = true;
+      }
+      return true;
+    }
+
+    const rField = el.getAttribute('data-ed-recall');
+    if (rField) {
+      const lidx = Number(el.getAttribute('data-lidx'));
+      const ridx = Number(el.getAttribute('data-ridx'));
+      const lesson = ed.course.lessons[lidx];
+      if (lesson && Array.isArray(lesson.activeRecall) && lesson.activeRecall[ridx]) {
+        lesson.activeRecall[ridx][rField] = el.value;
+        ed.dirty = true;
+      }
+      return true;
+    }
+
     const mField = el.getAttribute('data-ed-mem');
     if (mField) {
       const lidx = Number(el.getAttribute('data-lidx'));
@@ -1986,6 +2573,18 @@ window.EpiApp = (function () {
       return true;
     }
 
+    if (el.hasAttribute('data-ed-qcm-wrong')) {
+      const qidx = Number(el.getAttribute('data-qidx'));
+      const key = el.getAttribute('data-ed-qcm-wrong');
+      const q = ed.qcms[qidx];
+      if (q) {
+        if (!q.wrongReasons || typeof q.wrongReasons !== 'object') q.wrongReasons = {};
+        q.wrongReasons[key] = el.value;
+        ed.dirty = true;
+      }
+      return true;
+    }
+
     if (el.hasAttribute('data-ed-qcm-corr')) {
       const qidx = Number(el.getAttribute('data-qidx'));
       const key = el.getAttribute('data-ed-qcm-corr');
@@ -2009,6 +2608,23 @@ window.EpiApp = (function () {
 
     // 1. Champs de l'éditeur Admin (sans re-rendre tout le DOM pendant la saisie !)
     if (handleEditorLiveField(el)) return;
+
+    // 1b. Sélection de fichiers dans le formulaire unifié "Ajouter un cours" (sans perdre la saisie)
+    if (el.getAttribute('data-action') === 'admin-wizard-select-files' && el.files && el.files.length > 0) {
+      const kind = el.getAttribute('data-kind') || 'primary_source';
+      const files = Array.from(el.files);
+      const snapIds = ['add-course-title', 'add-course-code', 'add-course-year', 'add-course-prof', 'add-course-priority', 'add-course-semester', 'add-course-tags', 'add-course-summary'];
+      const savedVals = {};
+      snapIds.forEach(id => { const node = document.getElementById(id); if (node) savedVals[id] = node.value; });
+
+      if (kind === 'support_doc') state.adminState.addWizard.pendingSupportFiles = files;
+      else state.adminState.addWizard.pendingFiles = files;
+      render();
+
+      snapIds.forEach(id => { const node = document.getElementById(id); if (node && savedVals[id] !== undefined) node.value = savedVals[id]; });
+      window.EpiUI.toast(`${files.length} fichier(s) sélectionné(s) — cliquez sur « Téléverser & Analyser le cours ».`, 'success');
+      return;
+    }
 
     // 2. Upload de fichiers PDF / Annexes
     if (el.getAttribute('data-action') === 'admin-upload-files' && el.files && el.files.length > 0) {
@@ -2079,6 +2695,15 @@ window.EpiApp = (function () {
       return;
     }
 
+    if (el.getAttribute('data-action') === 'ar-draft') {
+      const arid = el.getAttribute('data-arid');
+      if (arid) {
+        if (!state.runtime.activeRecall[arid]) state.runtime.activeRecall[arid] = { revealed: false, draft: '' };
+        state.runtime.activeRecall[arid].draft = el.value;
+      }
+      return;
+    }
+
     if (el.getAttribute('data-action') === 'import-backup' && el.files && el.files[0]) {
       const reader = new FileReader();
       reader.onload = () => {
@@ -2127,15 +2752,16 @@ window.EpiApp = (function () {
   }
 
   function init() {
+    state.theme = window.EpiStorage.setTheme(window.EpiStorage.getTheme());
     document.addEventListener('click', handleClick);
     document.addEventListener('submit', handleSubmit);
     document.addEventListener('input', (e) => {
-      if (e.target.matches('[data-filter="courses-search"], [data-filter="admin-search"], [data-action="fc-draft"], [data-ed-course], [data-ed-lesson], [data-ed-mem], [data-ed-fc], [data-ed-qcm], [data-ed-qcm-opt]')) {
+      if (e.target.matches('[data-filter="courses-search"], [data-filter="admin-search"], [data-action="fc-draft"], [data-action="ar-draft"], [data-ed-course], [data-ed-lesson], [data-ed-sec], [data-ed-recall], [data-ed-mem], [data-ed-fc], [data-ed-qcm], [data-ed-qcm-opt], [data-ed-qcm-wrong]')) {
         handleInputOrChange(e);
       }
     });
     document.addEventListener('change', (e) => {
-      if (e.target.matches('select[data-filter], input[data-action="import-backup"], input[data-action="admin-upload-files"], select[data-action="admin-wizard-module-change"], [data-ed-course], [data-ed-lesson], [data-ed-lesson-reviewed], [data-ed-mem], [data-ed-fc], [data-ed-qcm], [data-ed-qcm-corr]')) {
+      if (e.target.matches('select[data-filter], input[data-action="import-backup"], input[data-action="admin-upload-files"], input[data-action="admin-wizard-select-files"], select[data-action="admin-wizard-module-change"], [data-ed-course], [data-ed-lesson], [data-ed-lesson-reviewed], [data-ed-sec], [data-ed-recall], [data-ed-mem], [data-ed-fc], [data-ed-qcm], [data-ed-qcm-corr], [data-ed-qcm-wrong]')) {
         handleInputOrChange(e);
       }
     });
@@ -2145,6 +2771,11 @@ window.EpiApp = (function () {
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') window.EpiUI.closeModal();
+    });
+    window.addEventListener('pagehide', () => {
+      if (state.authenticated && window.EpiStorage.isServerMode()) {
+        window.EpiStorage.syncNow();
+      }
     });
 
     render();

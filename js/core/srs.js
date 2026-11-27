@@ -177,7 +177,12 @@ window.EpiSRS = (function () {
       }
     });
 
-    const hasActivity = (lRec && (lRec.status !== 'not_started' || lRec.studied || lRec.stepAVisited || lRec.miniTestAttempts > 0))
+    const hasStepWork = lRec && (
+      (Array.isArray(lRec.understandCompletedIds) && lRec.understandCompletedIds.length > 0) ||
+      (Array.isArray(lRec.activeRecallDoneIds) && lRec.activeRecallDoneIds.length > 0) ||
+      (Array.isArray(lRec.memCheckedIds) && lRec.memCheckedIds.length > 0)
+    );
+    const hasActivity = (lRec && (lRec.status !== 'not_started' || lRec.studied || lRec.stepAVisited || lRec.miniTestAttempts > 0 || hasStepWork))
       || cardsReviewed > 0 || qcmAnswered > 0;
 
     if (!hasActivity) {

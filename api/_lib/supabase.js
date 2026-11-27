@@ -159,6 +159,8 @@ export function mapCourseRow(c) {
     priorityScore: c.priority_score ?? 50,
     vigilance2026: !!c.vigilance_2026,
     summary: c.summary || '',
+    academicYear: c.academic_year || '',
+    metadata: c.metadata && typeof c.metadata === 'object' ? c.metadata : {},
     status: c.status || 'draft',
     version: c.version || 1,
     lessons: Array.isArray(c.lessons) ? c.lessons : [],
@@ -185,6 +187,8 @@ export function mapFlashcardRow(f) {
     slideTitle: f.slide_title || '',
     sourceFile: f.source_file || '',
     sourceType: f.source_type || 'course_generated',
+    provenance: f.provenance || 'source_explicit',
+    chapterTitle: f.chapter_title || '',
     needsReview: !!f.needs_review
   };
 }
@@ -202,6 +206,8 @@ export function mapQcmRow(q) {
     slideNum: q.slide_num ?? null,
     slideTitle: q.slide_title || '',
     sourceFile: q.source_file || '',
+    provenance: q.provenance || 'source_explicit',
+    chapterTitle: q.chapter_title || '',
     multiSelect: !!q.multi_select,
     isHard: !!q.is_hard,
     needsReview: !!q.needs_review,
@@ -234,6 +240,8 @@ export function courseToDbRow(c) {
     priority_score: Number(c.priorityScore ?? 50),
     vigilance_2026: !!c.vigilance2026,
     summary: c.summary || '',
+    academic_year: c.academicYear || '',
+    metadata: c.metadata && typeof c.metadata === 'object' ? c.metadata : {},
     status: c.status || 'draft',
     version: Number(c.version) || 1,
     lessons: Array.isArray(c.lessons) ? c.lessons : [],
@@ -259,6 +267,8 @@ export function flashcardToDbRow(f, courseId) {
     slide_title: f.slideTitle || '',
     source_file: f.sourceFile || '',
     source_type: f.sourceType || 'course_generated',
+    provenance: f.provenance || 'source_explicit',
+    chapter_title: f.chapterTitle || '',
     needs_review: !!f.needsReview
   };
 }
@@ -276,6 +286,8 @@ export function qcmToDbRow(q, courseId) {
     slide_num: q.slideNum ?? null,
     slide_title: q.slideTitle || '',
     source_file: q.sourceFile || '',
+    provenance: q.provenance || 'source_explicit',
+    chapter_title: q.chapterTitle || '',
     multi_select: !!q.multiSelect,
     is_hard: !!q.isHard,
     needs_review: !!q.needsReview,
@@ -309,4 +321,28 @@ export function createEmptyProgress(userId, userName) {
     personalBestQuiz: 0,
     dismissedNotifDate: null
   };
+}
+
+export function mapImportJobRow(j, includeArtifacts = false) {
+  if (!j) return null;
+  const out = {
+    id: j.id,
+    courseId: j.course_id,
+    createdBy: j.created_by || null,
+    status: j.status || 'queued',
+    currentStage: Number(j.current_stage) || 1,
+    currentStageKey: j.current_stage_key || 'file_uploaded',
+    progressPct: Number(j.progress_pct) || 0,
+    aiMode: j.ai_mode || 'deterministic',
+    stages: Array.isArray(j.stages) ? j.stages : [],
+    logs: Array.isArray(j.logs) ? j.logs : [],
+    qualityReport: j.quality_report && typeof j.quality_report === 'object' ? j.quality_report : {},
+    errorMessage: j.error_message || '',
+    retryCount: Number(j.retry_count) || 0,
+    createdAt: j.created_at,
+    updatedAt: j.updated_at,
+    completedAt: j.completed_at || null
+  };
+  if (includeArtifacts) out.artifacts = j.artifacts && typeof j.artifacts === 'object' ? j.artifacts : {};
+  return out;
 }

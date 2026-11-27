@@ -7,6 +7,7 @@ window.EpiViewsDashboard = (function () {
 
   function renderDashboard(profile) {
     const stats = window.EpiPlanner.getGlobalStats(profile);
+    const auditJourney = window.EpiJourney ? window.EpiJourney.getPlatformAudit(profile) : null;
     const rev = window.EpiSRS.getRevisionsSummary(profile);
     const weak = window.EpiSRS.getWeakPoints(profile);
     const redCount = weak.filter(w => w.mastery.level === 'red').length;
@@ -21,6 +22,7 @@ window.EpiViewsDashboard = (function () {
     if (act.courseId) heroBtnAttrs += ` data-course="${esc(act.courseId)}"`;
     if (act.lessonId) heroBtnAttrs += ` data-lesson="${esc(act.lessonId)}"`;
     if (act.step) heroBtnAttrs += ` data-step="${esc(act.step)}"`;
+    if (act.subStepId) heroBtnAttrs += ` data-substep="${esc(act.subStepId)}"`;
     if (act.startSession) heroBtnAttrs += ` data-start-session="1"`;
     if (act.startExam) heroBtnAttrs += ` data-start-exam="${act.startExam}"`;
 
@@ -50,15 +52,15 @@ window.EpiViewsDashboard = (function () {
       return `
         <div class="mission-item ${t.completed ? 'done' : ''}">
           <div style="min-width:0;flex:1;">
-            <div style="font-weight:700;font-size:14px;color:#0f1e3a;display:flex;align-items:center;gap:7px;">
+            <div style="font-weight:700;font-size:14px;color:var(--navy);display:flex;align-items:center;gap:7px;">
               <span>${t.completed ? '✅' : '○'}</span>
               <span>${esc(t.label)}</span>
               <span class="badge ${t.completed ? 'badge-green' : 'badge-neutral'}" style="font-variant-numeric:tabular-nums;">${t.current} / ${t.target}</span>
             </div>
-            <div style="font-size:12.5px;color:#64748b;margin-top:2px;">${esc(t.detail)}</div>
+            <div style="font-size:12.5px;color:var(--text-light);margin-top:2px;">${esc(t.detail)}</div>
           </div>
           ${t.completed
-            ? `<span style="font-size:12.5px;font-weight:700;color:#059669;">Accompli</span>`
+            ? `<span style="font-size:12.5px;font-weight:700;color:var(--green);">Accompli</span>`
             : `<button class="btn btn-secondary btn-sm" ${btnAttrs}>Aller →</button>`}
         </div>`;
     }).join('');
@@ -67,25 +69,25 @@ window.EpiViewsDashboard = (function () {
     const upcomingItems = [...rev.overdue, ...rev.forgotten, ...rev.dueToday, ...rev.upcoming].slice(0, 4);
     const revPreviewHtml = upcomingItems.length > 0
       ? upcomingItems.map(item => `
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid #f1f5f9;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
             <div style="min-width:0;">
-              <div style="font-size:13.5px;font-weight:600;color:#0f1e3a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(item.title)}</div>
-              <div style="font-size:12px;color:#64748b;">${esc(item.subtitle)}</div>
+              <div style="font-size:13.5px;font-weight:600;color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(item.title)}</div>
+              <div style="font-size:12px;color:var(--text-light);">${esc(item.subtitle)}</div>
             </div>
             <span class="badge ${item.lastRating === 'forgot' || (item.daysUntil !== null && item.daysUntil <= 0) ? 'badge-red' : 'badge-medium'}">
               ${item.lastRating === 'forgot' ? 'Oublié' : window.EpiUI.formatDueLabel(item.daysUntil)}
             </span>
           </div>`).join('')
-      : `<div style="padding:14px 0;font-size:13.5px;color:#64748b;">Aucune révision programmée pour l’instant. Maîtrisez une leçon ou pratiquez des flashcards pour activer le calendrier espacé (J+1 → J+3 → J+7 → J+14 → J+30).</div>`;
+      : `<div style="padding:14px 0;font-size:13.5px;color:var(--text-light);">Aucune révision programmée pour l’instant. Maîtrisez une leçon ou pratiquez des flashcards pour activer le calendrier espacé (J+1 → J+3 → J+7 → J+14 → J+30).</div>`;
 
     const weakPreviewHtml = weak.slice(0, 3).map(w => `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid #f1f5f9;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
         <div style="min-width:0;">
-          <div style="font-size:13.5px;font-weight:600;color:#0f1e3a;display:flex;align-items:center;gap:6px;">
+          <div style="font-size:13.5px;font-weight:600;color:var(--navy);display:flex;align-items:center;gap:6px;">
             <span class="mastery-dot ${w.mastery.color}"></span>
             <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(w.course.code)} · ${esc(w.lesson.title)}</span>
           </div>
-          <div style="font-size:12px;color:#64748b;">${esc(w.mastery.reasons[0] || '')}</div>
+          <div style="font-size:12px;color:var(--text-light);">${esc(w.mastery.reasons[0] || '')}</div>
         </div>
         <button class="btn btn-secondary btn-sm" data-action="go-lesson" data-course="${esc(w.course.id)}" data-lesson="${esc(w.lesson.id)}" data-step="${esc(w.targetStep)}">Pratiquer</button>
       </div>`).join('');
@@ -111,20 +113,24 @@ window.EpiViewsDashboard = (function () {
       <section class="kpi-grid">
         <div class="kpi-card clickable" data-action="nav" data-route="courses">
           <div class="kpi-top"><span>Progression globale</span>${icon('graduation', 18)}</div>
-          <div class="kpi-value">${stats.overallPct} %</div>
-          <div class="progress-bar"><div class="progress-fill green" style="width:${stats.overallPct}%"></div></div>
-          <div class="kpi-meta">${stats.masteredLessons} / ${stats.totalLessons} leçons maîtrisées (${stats.studiedLessons} étudiée${stats.studiedLessons > 1 ? 's' : ''})</div>
+          <div class="kpi-value">${auditJourney ? auditJourney.overallStepPct : stats.overallPct} %</div>
+          <div class="progress-bar"><div class="progress-fill green" style="width:${auditJourney ? auditJourney.overallStepPct : stats.overallPct}%"></div></div>
+          <div class="kpi-meta">
+            ${auditJourney
+              ? `${auditJourney.completedPhases}/${auditJourney.phasesCount} phases · ${auditJourney.completedSteps}/${auditJourney.stepsCount} étapes · ${stats.masteredLessons}/${stats.totalLessons} leçons maîtrisées`
+              : `${stats.masteredLessons} / ${stats.totalLessons} leçons maîtrisées (${stats.studiedLessons} étudiée${stats.studiedLessons > 1 ? 's' : ''})`}
+          </div>
         </div>
 
         <div class="kpi-card clickable" data-action="nav" data-route="revisions">
           <div class="kpi-top"><span>Révisions à faire</span>${icon('repeat', 18)}</div>
-          <div class="kpi-value" style="color:${rev.urgentCount > 0 ? '#dc2626' : '#0f1e3a'};">${rev.urgentCount}</div>
+          <div class="kpi-value" style="color:${rev.urgentCount > 0 ? 'var(--red)' : 'var(--navy)'};">${rev.urgentCount}</div>
           <div class="kpi-meta">${rev.overdue.length} en retard · ${rev.dueToday.length} aujourd’hui · ${rev.upcoming.length} à venir</div>
         </div>
 
         <div class="kpi-card clickable" data-action="nav" data-route="weak">
           <div class="kpi-top"><span>Points faibles détectés</span>${icon('alert', 18)}</div>
-          <div class="kpi-value" style="color:${redCount > 0 ? '#dc2626' : '#0f1e3a'};">${weak.length}</div>
+          <div class="kpi-value" style="color:${redCount > 0 ? 'var(--red)' : 'var(--navy)'};">${weak.length}</div>
           <div class="kpi-meta">${redCount} rouge${redCount > 1 ? 's' : ''} (non maîtrisé) · ${orangeCount} orange (partiel)</div>
         </div>
 
@@ -167,17 +173,17 @@ window.EpiViewsDashboard = (function () {
               <h2 class="card-title">${icon('alert', 18)} Vos points faibles</h2>
               <button class="btn btn-ghost btn-sm" data-action="nav" data-route="weak">Tout voir →</button>
             </div>
-            ${weakPreviewHtml || `<div style="padding:12px 0;font-size:13.5px;color:#64748b;">Aucun point faible enregistré pour le moment. Vos difficultés apparaîtront ici dès vos premiers QCM, flashcards et mini-tests.</div>`}
+            ${weakPreviewHtml || `<div style="padding:12px 0;font-size:13.5px;color:var(--text-light);">Aucun point faible enregistré pour le moment. Vos difficultés apparaîtront ici dès vos premiers QCM, flashcards et mini-tests.</div>`}
           </div>
         </div>
       </section>
 
       ${coursesNeedingRev.length > 0 ? `
-        <div class="card" style="margin-bottom:22px;background:#fffbeb;border-color:#fde68a;">
+        <div class="card" style="margin-bottom:22px;background:var(--orange-soft);border-color:var(--orange-border);">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
             <div>
-              <strong style="color:#92400e;">Cours nécessitant une révision (${coursesNeedingRev.length}) :</strong>
-              <span style="font-size:13.5px;color:#78350f;">
+              <strong style="color:var(--sem-amber);">Cours nécessitant une révision (${coursesNeedingRev.length}) :</strong>
+              <span style="font-size:13.5px;color:var(--sem-amber);">
                 ${coursesNeedingRev.map(c => `${c.code} (${c.shortTitle})`).join(' · ')}
               </span>
             </div>
@@ -199,11 +205,18 @@ window.EpiViewsDashboard = (function () {
 
   function renderCourseCard(profile, course) {
     const st = window.EpiPlanner.getCourseStats(profile, course);
+    const cj = window.EpiJourney ? window.EpiJourney.getCourseJourney(profile, course) : null;
     const mod = window.EpiData.modules.find(m => m.id === course.moduleId);
     const lessons = window.EpiUI.asArr(course.lessons);
-    const firstTarget = lessons.find(l => !(profile.lessons[l.id] && profile.lessons[l.id].mastered)) || lessons[0];
+    const nextLj = cj && cj.nextLessonJourney;
+    const firstTarget = (nextLj && nextLj.lesson) || lessons.find(l => !(profile.lessons[l.id] && profile.lessons[l.id].mastered)) || lessons[0];
+    const targetPhase = (nextLj && nextLj.nextPhase && nextLj.nextPhase.key) || 'A';
+    const targetSubStep = (nextLj && nextLj.nextStep && nextLj.nextStep.id) || '';
     const hasUpdated = lessons.some(l => window.EpiStorage.isLessonFlaggedUpdated(profile, l));
-    const ctaText = st.completed === st.total && st.total > 0 ? 'Réviser le cours' : (st.inProgress > 0 || st.studied > 0 ? 'Continuer' : 'Commencer à apprendre');
+    const pct = cj ? cj.overallPct : st.masteryPct;
+    const ctaText = (cj && cj.status === 'completed') || (st.completed === st.total && st.total > 0)
+      ? 'Réviser le cours'
+      : ((cj && cj.completedSteps > 0) || st.inProgress > 0 || st.studied > 0 ? 'Continuer' : 'Commencer à apprendre');
     const fcCount = window.EpiData.flashcards.filter(f => f.courseId === course.id).length;
     const qcmCount = window.EpiData.qcms.filter(q => q.courseId === course.id).length;
 
@@ -213,6 +226,7 @@ window.EpiViewsDashboard = (function () {
           <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
             <span class="course-code-pill">${esc(course.code)}</span>
             ${mod && mod.subject ? `<span class="badge badge-neutral" style="font-size:11px;">${esc(mod.subject)}</span>` : ''}
+            ${cj && window.EpiJourneyUI ? window.EpiJourneyUI.renderStatusBadge(cj.status) : ''}
           </div>
           <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;">
             ${course.bmCount > 0 || course.vigilance2026 ? window.EpiUI.priorityBadge(course.priority, course.vigilance2026) : ''}
@@ -223,21 +237,22 @@ window.EpiViewsDashboard = (function () {
           <h3>${esc(course.title)}</h3>
           <div class="course-prof">${esc(course.professor || 'Faculté de Médecine')}</div>
         </div>
-        <div style="font-size:13px;color:#475569;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+        <div style="font-size:13px;color:var(--text-muted);display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
           ${course.bmCount > 0 ? `<span><strong>${course.bmCount}</strong> QCM BM</span><span>·</span>` : `<span><strong>${fcCount}</strong> flashcards · <strong>${qcmCount}</strong> QCM</span><span>·</span>`}
           <span><strong>${st.total}</strong> leçon${st.total > 1 ? 's' : ''}</span>
+          ${cj ? `<span>· <strong>${cj.totalPhases}</strong> phases</span>` : ''}
           ${st.needsRevision > 0 ? `<span class="badge badge-red" style="padding:1px 8px;">${st.needsRevision} à réviser</span>` : ''}
         </div>
         <div>
-          <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;color:#475569;">
-            <span>Maîtrise : <strong>${st.completed}/${st.total}</strong> leçons</span>
-            <strong style="font-variant-numeric:tabular-nums;">${st.masteryPct} %</strong>
+          <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;color:var(--text-muted);">
+            <span>${cj ? `Parcours : <strong>${cj.completedPhases}/${cj.totalPhases}</strong> phases · <strong>${cj.completedSteps}/${cj.totalSteps}</strong> étapes` : `Maîtrise : <strong>${st.completed}/${st.total}</strong> leçons`}</span>
+            <strong style="font-variant-numeric:tabular-nums;">${pct} %</strong>
           </div>
-          <div class="progress-bar"><div class="progress-fill ${st.masteryPct === 100 ? 'green' : ''}" style="width:${st.masteryPct}%"></div></div>
+          <div class="progress-bar"><div class="progress-fill ${pct === 100 ? 'green' : ''}" style="width:${pct}%"></div></div>
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:auto;padding-top:4px;">
           <button class="btn btn-ghost btn-sm" data-action="go-course" data-course="${esc(course.id)}">Feuille de route</button>
-          ${firstTarget ? `<button class="btn btn-primary btn-sm" data-action="go-lesson" data-course="${esc(course.id)}" data-lesson="${esc(firstTarget.id)}" data-step="A">${ctaText}</button>` : ''}
+          ${firstTarget ? `<button class="btn btn-primary btn-sm" data-action="go-lesson" data-course="${esc(course.id)}" data-lesson="${esc(firstTarget.id)}" data-step="${esc(targetPhase)}" data-substep="${esc(targetSubStep)}">${ctaText}</button>` : ''}
         </div>
       </article>`;
   }
@@ -266,16 +281,38 @@ window.EpiViewsDashboard = (function () {
     const modulesHtml = window.EpiData.modules.map(mod => {
       const modCourses = window.EpiData.courses.filter(c => c.moduleId === mod.id && matchesCourse(c, mod));
       if (modCourses.length === 0) return '';
+      let modStepsDone = 0, modStepsTot = 0, modPhasesDone = 0, modPhasesTot = 0, modLessons = 0, modHasActivity = false;
+      modCourses.forEach(c => {
+        const cj = window.EpiJourney ? window.EpiJourney.getCourseJourney(profile, c) : null;
+        if (cj) {
+          modStepsDone += cj.completedSteps;
+          modStepsTot += cj.totalSteps;
+          modPhasesDone += cj.completedPhases;
+          modPhasesTot += cj.totalPhases;
+          modLessons += cj.totalLessons;
+          if (cj.status !== 'not_started') modHasActivity = true;
+        }
+      });
+      const modPct = modStepsTot > 0 ? Math.round((modStepsDone / modStepsTot) * 100) : 0;
+      const modStatus = modStepsTot > 0 && modStepsDone === modStepsTot ? 'completed' : ((modStepsDone > 0 || modHasActivity) ? 'in_progress' : 'not_started');
       return `
         <section style="margin-bottom:28px;">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
-            <span style="width:10px;height:28px;border-radius:4px;background:${mod.accent || '#1d4ed8'};display:inline-block;"></span>
-            <div>
+          <div class="j-module-head">
+            <span style="width:10px;height:36px;border-radius:4px;background:${mod.accent || '#1d4ed8'};display:inline-block;flex-shrink:0;"></span>
+            <div style="flex:1;min-width:220px;">
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <h2 style="margin:0;font-size:17.5px;color:#0f1e3a;">${esc(mod.code)} — ${esc(mod.title)}</h2>
+                <h2 style="margin:0;font-size:17.5px;color:var(--navy);">${esc(mod.code)} — ${esc(mod.title)}</h2>
                 <span class="badge badge-medium">${esc(mod.subject || 'Médecine')}</span>
+                ${window.EpiJourneyUI ? window.EpiJourneyUI.renderStatusBadge(modStatus) : ''}
               </div>
-              <div style="font-size:13px;color:#64748b;">${esc(mod.description || '')}</div>
+              <div style="font-size:13px;color:var(--text-light);">${esc(mod.description || '')}</div>
+            </div>
+            <div class="j-module-progress">
+              <div style="display:flex;justify-content:space-between;gap:12px;font-size:12px;color:var(--text-muted);margin-bottom:4px;">
+                <span>${modCourses.length} cours · ${modLessons} leçons · ${modPhasesDone}/${modPhasesTot} phases</span>
+                <strong>${modPct} %</strong>
+              </div>
+              <div class="progress-bar j-mini-bar"><div class="progress-fill ${modPct === 100 ? 'green' : ''}" style="width:${modPct}%"></div></div>
             </div>
           </div>
           <div class="courses-grid">
@@ -352,19 +389,19 @@ window.EpiViewsDashboard = (function () {
 
         return `
           <tr>
-            <td style="font-weight:700;color:#64748b;">#${idx + 1}</td>
-            <td><strong>${esc(x.course.code)}</strong><br><span style="font-size:12px;color:#64748b;">${esc(x.course.shortTitle)}</span></td>
+            <td style="font-weight:700;color:var(--text-light);">#${idx + 1}</td>
+            <td><strong>${esc(x.course.code)}</strong><br><span style="font-size:12px;color:var(--text-light);">${esc(x.course.shortTitle)}</span></td>
             <td>
-              <div style="font-weight:600;color:#0f1e3a;">${esc(x.lesson.title)}</div>
-              <div style="font-size:12px;color:#64748b;">${esc(x.lesson.sourceRef)}</div>
+              <div style="font-weight:600;color:var(--navy);">${esc(x.lesson.title)}</div>
+              <div style="font-size:12px;color:var(--text-light);">${esc(x.lesson.sourceRef)}</div>
             </td>
             <td style="font-variant-numeric:tabular-nums;">
               <strong>${x.lesson.bmCount} QCM</strong>
-              ${x.lesson.bmRefs.length ? `<div style="font-size:11.5px;color:#64748b;">${esc(x.lesson.bmRefs.slice(0, 2).join(', '))}</div>` : `<div style="font-size:11.5px;color:#64748b;">Non tombé en BM 2012–2025</div>`}
+              ${x.lesson.bmRefs.length ? `<div style="font-size:11.5px;color:var(--text-light);">${esc(x.lesson.bmRefs.slice(0, 2).join(', '))}</div>` : `<div style="font-size:11.5px;color:var(--text-light);">Non tombé en BM 2012–2025</div>`}
             </td>
             <td>
               ${window.EpiUI.priorityBadge(x.lesson.priority, x.course.vigilance2026 && x.lesson.bmCount === 0)}
-              <div style="font-size:11.5px;color:#64748b;margin-top:3px;">Score : ${x.lesson.priorityScore}/100</div>
+              <div style="font-size:11.5px;color:var(--text-light);margin-top:3px;">Score : ${x.lesson.priorityScore}/100</div>
             </td>
             <td>${window.EpiUI.masteryBadge(m)}</td>
             <td>
@@ -400,8 +437,8 @@ window.EpiViewsDashboard = (function () {
       const errRows = window.EpiData.bmErrors.map((e, i) => `
         <tr>
           <td><strong>#${i + 1}</strong></td>
-          <td><span class="badge badge-bm">${esc(e.bmRef)}</span><br><span style="font-size:12px;color:#64748b;">${esc(e.courseId)}</span></td>
-          <td><strong>${esc(e.topic)}</strong><div style="font-size:12.5px;color:#475569;margin-top:4px;">${esc(e.reason)}</div><div style="font-size:11.5px;color:#64748b;margin-top:3px;">Source : ${esc(e.courseProof)}</div></td>
+          <td><span class="badge badge-bm">${esc(e.bmRef)}</span><br><span style="font-size:12px;color:var(--text-light);">${esc(e.courseId)}</span></td>
+          <td><strong>${esc(e.topic)}</strong><div style="font-size:12.5px;color:var(--text-muted);margin-top:4px;">${esc(e.reason)}</div><div style="font-size:11.5px;color:var(--text-light);margin-top:3px;">Source : ${esc(e.courseProof)}</div></td>
           <td><span class="badge badge-red">❌ BM : ${esc(e.bmAnswer)}</span></td>
           <td><span class="badge badge-green">✅ Cours : ${esc(e.courseAnswer)}</span></td>
           <td><button class="btn btn-secondary btn-sm" data-action="go-lesson" data-course="${esc(e.courseId)}" data-lesson="${esc(e.lessonId)}" data-step="D">Pratiquer</button></td>
@@ -425,7 +462,7 @@ window.EpiViewsDashboard = (function () {
         <tr>
           <td><strong>${esc(o.chapters)}</strong></td>
           <td style="font-weight:700;font-variant-numeric:tabular-nums;">${o.count} QCM</td>
-          <td style="color:#475569;">${esc(o.note)}</td>
+          <td style="color:var(--text-muted);">${esc(o.note)}</td>
         </tr>`).join('');
 
       bodyHtml = `

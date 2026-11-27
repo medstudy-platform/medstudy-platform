@@ -1,10 +1,36 @@
 /* ==========================================================================
-   MedStudy Production — Extracteurs Cloud PDF, PPTX et PPT (Node.js Linux/Vercel)
-   100 % agnostique de la matière · Traçabilité page/diapo · Détection chevauchement
+   MedStudy Universal Engine — Extracteurs Complets PDF, PPTX et PPT (Node.js)
+   Phase 3 : Extraction intégrale page par page / diapositive par diapositive
+   (Titres, paragraphes, puces, tableaux, graphiques, SmartArt, notes, formules,
+    définitions, classifications, exemples cliniques, images & drapeaux OCR)
    ========================================================================== */
 import JSZip from 'jszip';
 
-function decodeXmlEntities(str) {
+const ADMIN_NOISE_PATTERNS = [
+  /^r[eé]publique\s+alg[eé]rienne/i,
+  /^minist[eè]re\s+de\s+l['’]?enseignement/i,
+  /^minist[eè]re\s+de\s+la\s+sant[eé]/i,
+  /^universit[eé]\s+/i,
+  /^facult[eé]\s+de\s+m[eé]decine/i,
+  /^d[eé]partement\s+de\s+m[eé]decine/i,
+  /^merci\s+(pour\s+)?votre\s+attention/i,
+  /^fin\s+(du\s+cours|de\s+la\s+pr[eé]sentation)\.?$/i,
+  /^(page|diapo|diapositive|slide)\s*\d+(\s*\/\s*\d+)?$/i,
+  /^\d+\s*\/\s*\d+$/,
+  /^\d{1,3}$/,
+  /^ann[eé]e\s+universitaire\s*[:\-]?\s*\d{4}/i,
+  /^https?:\/\//i,
+  /^www\./i,
+  /^doi\s*:/i
+];
+
+export function isAdminBoilerplate(line) {
+  const t = String(line || '').trim();
+  if (!t || t.length < 2) return true;
+  return ADMIN_NOISE_PATTERNS.some((re) => re.test(t));
+}
+
+export function decodeXmlEntities(str) {
   return String(str || '')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
@@ -26,13 +52,17 @@ function normalizeZipPath(baseDir, relTarget) {
   return parts.join('/');
 }
 
-function normalizeTokens(text) {
+export function normalizeTokens(text) {
   const ascii = String(text || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ');
-  const stop = new Set(['de', 'du', 'des', 'la', 'le', 'les', 'et', 'en', 'au', 'aux', 'un', 'une', 'sur', 'pour', 'par', 'avec', 'dans', 'cours', 'pptx', 'pdf', 'ppt', 'ppsx']);
+  const stop = new Set([
+    'de', 'du', 'des', 'la', 'le', 'les', 'et', 'en', 'au', 'aux', 'un', 'une',
+    'sur', 'pour', 'par', 'avec', 'dans', 'cours', 'pptx', 'pdf', 'ppt', 'ppsx',
+    'est', 'sont', 'qui', 'que', 'plus', 'tout', 'tous', 'cette', 'ces', 'son', 'ses'
+  ]);
   return Array.from(new Set(ascii.split(/\s+/).filter((w) => w.length >= 3 && !stop.has(w))));
 }
 
@@ -66,7 +96,6 @@ export function detectCourseOverlap(existingCourses, sourceFilename, presentatio
   const baseLow = fnLow.replace(/\.(pptx|ppt|pdf)$/i, '').replace(/\.ppsx$/i, '').trim();
   const pptTokens = normalizeTokens(`${sourceFilename} ${presentationTitle}`);
 
-  // Passe 1 : correspondance fichier exacte / homologue
   for (const c of existingCourses || []) {
     if (c.pptImport && c.pptImport.originalFilename && c.pptImport.originalFilename.toLowerCase() === fnLow) continue;
     for (const sf of (c.sourceFiles || [])) {
@@ -85,7 +114,6 @@ export function detectCourseOverlap(existingCourses, sourceFilename, presentatio
     }
   }
 
-  // Passe 2 : chevauchement thématique
   for (const c of existingCourses || []) {
     if (c.pptImport && c.pptImport.originalFilename && c.pptImport.originalFilename.toLowerCase() === fnLow) continue;
     const cTokens = normalizeTokens(`${c.title} ${c.shortTitle || ''}`);
@@ -108,6 +136,24 @@ export function detectCourseOverlap(existingCourses, sourceFilename, presentatio
   return { hasOverlap: false, matchedCourseId: '', matchedCourseCode: '', matchedCourseTitle: '', overlapType: 'none', reason: '', resolution: 'none' };
 }
 
+export function isHeadingCandidate(line) {
+  const t = String(line || '').trim();
+  if (t.length < 4 || t.length > 115) return false;
+  if (isAdminBoilerplate(t)) return false;
+  if (/^(CHAPITRE|PARTIE|SECTION|MODULE|UNIT[EÉ]|LE[CÇ]ON|TD\s*\d+|CAS\s+CLINIQUE)\b/i.test(t)) return true;
+  if (/^([IVX]{1,4}\s*[\.\-\)]\s+\S|[1-9][0-9]?(\.[1-9][0-9]?)?\s*[\.\-\)]\s+[A-ZÉÈÊÀÂÎÔÙÇ])/.test(t)) return true;
+  if (/^(INTRODUCTION|G[EÉ]N[EÉ]RALIT[EÉ]S|OBJECTIFS|D[EÉ]FINITIONS?|CLASSIFICATIONS?|[EÉ]PID[EÉ]MIOLOGIE|[EÉ]TIOLOGIE|FACTEURS?\s+DE\s+RISQUE|PHYSIOPATHOLOGIE|ANATOMOPATHOLOGIE|CLINIQUE|SIGNES?\s+CLINIQUES?|S[EÉ]MIOLOGIE|DIAGNOSTIC|EXAMENS?\s+COMPL[EÉ]MENTAIRES?|FORMES?\s+CLINIQUES?|COMPLICATIONS?|[EÉ]VOLUTION|PRONOSTIC|TRAITEMENT|PRISE\s+EN\s+CHARGE|CONDUITE\s+[AÀ]\s+TENIR|PR[EÉ]VENTION|PROPHYLAXIE|SURVEILLANCE|M[EÉ]CANISME|PHARMACOCIN[EÉ]TIQUE|PHARMACODYNAMIE|INDICATIONS?|CONTRE[\-\s]INDICATIONS?|EFFETS?\s+IND[EÉ]SIRABLES?|M[EÉ]THODES?|R[EÉ]SULTATS?|CONCLUSION|ARTICLE\s+\d+)\b/i.test(t)) {
+    return true;
+  }
+  const lettersOnly = t.replace(/[^a-zA-ZÉÈÊËÀÂÄÎÏÔÖÙÛÜÇéèêëàâäîïôöùûüç]/g, '');
+  if (lettersOnly.length >= 6 && t.length <= 78 && !/[a-z]/.test(t) && !t.endsWith('.')) return true;
+  return false;
+}
+
+function cleanLine(s) {
+  return String(s || '').replace(/\u0000/g, '').replace(/\s+/g, ' ').trim();
+}
+
 function extractXmlTextRuns(xmlFragment) {
   const out = [];
   const pMatches = xmlFragment.match(/<a:p\b[\s\S]*?<\/a:p>/g) || [];
@@ -118,10 +164,12 @@ function extractXmlTextRuns(xmlFragment) {
     while ((m = tRegex.exec(p)) !== null) {
       texts.push(decodeXmlEntities(m[1]));
     }
-    const line = texts.join('').replace(/\s+/g, ' ').trim();
+    const line = cleanLine(texts.join(''));
     if (line) {
-      const isBullet = /<a:buChar|<a:buAutoNum|lvl="[1-9]"/.test(p) || /^[\-•*▪◦►]/.test(line);
-      out.push({ text: line, isBullet });
+      const lvlMatch = p.match(/\blvl="(\d+)"/);
+      const level = lvlMatch ? Number(lvlMatch[1]) : 0;
+      const isBullet = /<a:buChar|<a:buAutoNum/.test(p) || level >= 1 || /^[\-•*▪◦►▸✓➢➤]/.test(line);
+      out.push({ text: line, isBullet, level });
     }
   }
   return out;
@@ -138,12 +186,20 @@ function extractTablesFromSlideXml(slideXml, slideNum, slideTitle) {
     }).filter((r) => r.some(Boolean));
 
     if (rows.length >= 2) {
+      const colCount = Math.max(...rows.map((r) => r.length));
+      const normRows = rows.map((r) => {
+        const copy = r.slice();
+        while (copy.length < colCount) copy.push('—');
+        return copy;
+      });
       tables.push({
         title: `${slideTitle || 'Tableau'} — Tableau ${idx + 1} (Diapositive ${slideNum})`,
         slideNum,
+        pageRef: `Diapositive ${slideNum}`,
         isChart: false,
-        headers: rows[0],
-        rows: rows.slice(1)
+        provenance: 'source_explicit',
+        headers: normRows[0],
+        rows: normRows.slice(1)
       });
     }
   });
@@ -187,13 +243,52 @@ function extractChartFromXml(chartXml, slideNum) {
   return {
     title: `${titleTxt} (Diapositive ${slideNum})`,
     slideNum,
+    pageRef: `Diapositive ${slideNum}`,
     isChart: true,
+    provenance: 'source_explicit',
     headers: ['Catégorie / Axe', ...seriesList.map((s) => s.name)],
     rows
   };
 }
 
-export async function analyzePptxBuffer(buffer, course, sourceFilename, existingCourses) {
+function extractSmartArtLines(diagramXml) {
+  const out = [];
+  const ptMatches = diagramXml.match(/<dgm:pt\b[\s\S]*?<\/dgm:pt>/g) || [];
+  for (const pt of ptMatches) {
+    const runs = extractXmlTextRuns(pt);
+    const joined = runs.map((r) => r.text).join(' — ').trim();
+    if (joined && joined.length >= 3 && !out.includes(joined)) {
+      out.push(joined);
+    }
+  }
+  return out;
+}
+
+function extractImageCaptionsFromSlideXml(slideXml) {
+  const captions = [];
+  const picMatches = slideXml.match(/<p:pic\b[\s\S]*?<\/p:pic>/g) || [];
+  for (const pic of picMatches) {
+    const nv = (pic.match(/<p:cNvPr\b[^>]*>/) || [''])[0];
+    const descr = (nv.match(/\bdescr="([^"]+)"/) || ['', ''])[1];
+    const title = (nv.match(/\btitle="([^"]+)"/) || ['', ''])[1];
+    const embedMatch = pic.match(/r:embed="([^"]+)"/);
+    const cleanDescr = decodeXmlEntities(descr || title).replace(/\s+/g, ' ').trim();
+    const meaningfulCaption = cleanDescr && !/^image\s*\d+|picture\s*\d+|\.(png|jpg|jpeg|emf|wmf)$/i.test(cleanDescr) ? cleanDescr : '';
+    captions.push({
+      relId: embedMatch ? embedMatch[1] : '',
+      caption: meaningfulCaption
+    });
+  }
+  return captions;
+}
+
+/**
+ * Extraction complète PPTX (OpenXML) :
+ * - Tous les shapes (y compris groupés <p:grpSp>)
+ * - Tableaux (<a:tbl>), Graphiques (<c:chart>), SmartArt (diagrams/data*.xml)
+ * - Notes présentateur, légendes d'images, médias candidats à l'OCR/Vision
+ */
+export async function extractPptxDocument(buffer, sourceFilename) {
   const zip = await JSZip.loadAsync(buffer);
   const presXml = await zip.file('ppt/presentation.xml')?.async('string');
   const relsXml = await zip.file('ppt/_rels/presentation.xml.rels')?.async('string');
@@ -202,15 +297,18 @@ export async function analyzePptxBuffer(buffer, course, sourceFilename, existing
   }
 
   let presTitle = '';
+  let authorMeta = '';
   const coreXml = await zip.file('docProps/core.xml')?.async('string');
   if (coreXml) {
     const tm = coreXml.match(/<dc:title[^>]*>([\s\S]*?)<\/dc:title>/);
     if (tm) {
-      const cand = decodeXmlEntities(tm[1]).replace(/\s+/g, ' ').trim();
+      const cand = cleanLine(decodeXmlEntities(tm[1]));
       if (cand.length >= 4 && !/(pptxgenjs|pr[eé]sentation\s*powerpoint|^diapositive|^presentation|^powerpoint|^microsoft|^untitled|^slide\s*\d*$)/i.test(cand)) {
         presTitle = cand;
       }
     }
+    const cm = coreXml.match(/<dc:creator[^>]*>([\s\S]*?)<\/dc:creator>/);
+    if (cm) authorMeta = cleanLine(decodeXmlEntities(cm[1]));
   }
 
   const relMap = {};
@@ -223,11 +321,14 @@ export async function analyzePptxBuffer(buffer, course, sourceFilename, existing
   let sm;
   while ((sm = sldReg.exec(presXml)) !== null) slideIds.push(sm[1]);
 
-  const slides = [];
-  const manualReviewSlides = [];
+  const units = [];
+  const manualReviewItems = [];
+  const ocrCandidates = [];
   let tablesExtracted = 0;
   let chartsExtracted = 0;
+  let smartArtExtracted = 0;
   let speakerNotesExtracted = 0;
+  let imagesFound = 0;
 
   for (let i = 0; i < slideIds.length; i++) {
     const slideNum = i + 1;
@@ -235,13 +336,18 @@ export async function analyzePptxBuffer(buffer, course, sourceFilename, existing
     if (!target) continue;
     const slidePath = normalizeZipPath('ppt', target);
     const slideXml = await zip.file(slidePath)?.async('string');
-    if (!slideXml) continue;
+    if (!slideXml) {
+      manualReviewItems.push({ unitNum: slideNum, title: `Diapositive ${slideNum}`, reason: `Fichier XML manquant (${slidePath}).` });
+      continue;
+    }
 
     let slideTitle = '';
     const lines = [];
     const bullets = [];
+    const captions = [];
     const issues = [];
 
+    // Extraire TOUS les <p:sp> (y compris dans les groupes <p:grpSp> imbriqués)
     const spMatches = slideXml.match(/<p:sp\b[\s\S]*?<\/p:sp>/g) || [];
     for (const sp of spMatches) {
       const phMatch = sp.match(/<p:ph\b[^>]*type="([^"]+)"/);
@@ -253,29 +359,43 @@ export async function analyzePptxBuffer(buffer, course, sourceFilename, existing
         slideTitle = runs.map((r) => r.text).join(' — ');
       } else {
         for (const r of runs) {
-          if (r.isBullet) bullets.push(r.text.replace(/^[\-•*▪◦►]+\s*/, '').trim());
-          else lines.push(r.text);
+          if (r.isBullet) {
+            const cleaned = r.text.replace(/^[\-•*▪◦►▸✓➢➤]+\s*/, '').trim();
+            if (cleaned) bullets.push(cleaned);
+          } else {
+            lines.push(r.text);
+          }
         }
       }
     }
 
     if (!slideTitle && lines.length > 0) {
-      slideTitle = lines[0].length <= 130 ? lines.shift() : `${lines[0].slice(0, 95)}…`;
+      const firstNonNoiseIdx = lines.findIndex((l) => !isAdminBoilerplate(l));
+      if (firstNonNoiseIdx >= 0 && lines[firstNonNoiseIdx].length <= 130) {
+        slideTitle = lines.splice(firstNonNoiseIdx, 1)[0];
+      } else {
+        slideTitle = lines[0].slice(0, 95);
+      }
     }
+
     const tables = extractTablesFromSlideXml(slideXml, slideNum, slideTitle);
     tablesExtracted += tables.length;
 
-    // Relations de la diapositive (charts, notes, media images)
+    const picMeta = extractImageCaptionsFromSlideXml(slideXml);
+    for (const pm of picMeta) {
+      if (pm.caption) captions.push(pm.caption);
+    }
+
     const fileName = slidePath.split('/').pop();
     const sRelsXml = await zip.file(`ppt/slides/_rels/${fileName}.rels`)?.async('string');
     let speakerNotes = '';
-    let hasMedia = false;
+    const slideImages = [];
 
     if (sRelsXml) {
-      const sRelReg = /<Relationship\b[^>]*Type="([^"]+)"[^>]*Target="([^"]+)"[^>]*\/?>/g;
+      const sRelReg = /<Relationship\b[^>]*Id="([^"]+)"[^>]*Type="([^"]+)"[^>]*Target="([^"]+)"[^>]*\/?>/g;
       let srm;
       while ((srm = sRelReg.exec(sRelsXml)) !== null) {
-        const [, rType, rTarget] = srm;
+        const [, rId, rType, rTarget] = srm;
         if (!rTarget || rTarget.startsWith('http')) continue;
         const resolved = normalizeZipPath('ppt/slides', rTarget);
 
@@ -284,7 +404,16 @@ export async function analyzePptxBuffer(buffer, course, sourceFilename, existing
           if (chXml) {
             const chTbl = extractChartFromXml(chXml, slideNum);
             if (chTbl) { tables.push(chTbl); chartsExtracted++; }
-            else issues.push('Graphique détecté mais séries non lisibles — vérification visuelle recommandée.');
+            else issues.push('Graphique détecté mais séries de données non extractibles — vérification visuelle recommandée.');
+          }
+        } else if (rType.includes('diagramData') || resolved.startsWith('ppt/diagrams/data')) {
+          const dgmXml = await zip.file(resolved)?.async('string');
+          if (dgmXml) {
+            const dgmLines = extractSmartArtLines(dgmXml);
+            if (dgmLines.length) {
+              smartArtExtracted++;
+              dgmLines.forEach((dl) => bullets.push(dl));
+            }
           }
         } else if (rType.endsWith('/notesSlide') || resolved.startsWith('ppt/notesSlides/')) {
           const nXml = await zip.file(resolved)?.async('string');
@@ -302,313 +431,587 @@ export async function analyzePptxBuffer(buffer, course, sourceFilename, existing
             }
           }
         } else if (rType.endsWith('/image') || resolved.startsWith('ppt/media/')) {
-          hasMedia = true;
+          const imgEntry = zip.file(resolved);
+          const extMatch = resolved.match(/\.(png|jpe?g|gif|webp)$/i);
+          if (imgEntry) {
+            imagesFound++;
+            const imgMeta = {
+              relId: rId,
+              mediaPath: resolved,
+              mimeType: extMatch ? (extMatch[1].toLowerCase() === 'png' ? 'image/png' : (extMatch[1].toLowerCase() === 'webp' ? 'image/webp' : 'image/jpeg')) : '',
+              caption: (picMeta.find((p) => p.relId === rId)?.caption) || ''
+            };
+            slideImages.push(imgMeta);
+          }
         }
       }
     }
 
-    const wordCount = `${slideTitle} ${lines.join(' ')} ${bullets.join(' ')}`.split(/\s+/).filter((w) => w.length >= 2).length;
-    if (wordCount < 10 && hasMedia) {
-      issues.push('Diapositive à contenu visuel/image prédominant — vérification manuelle recommandée en mode cloud.');
-    } else if (wordCount < 3 && tables.length === 0 && !speakerNotes) {
-      issues.push('Diapositive vide ou purement graphique — à vérifier manuellement.');
+    const joinedForCount = `${slideTitle} ${lines.join(' ')} ${bullets.join(' ')} ${speakerNotes} ${captions.join(' ')}`;
+    const wordCount = joinedForCount.split(/\s+/).filter((w) => w.length >= 2).length;
+    const isVisualSlide = slideImages.length > 0 && wordCount < 28;
+    const isEmptySlide = wordCount < 4 && tables.length === 0 && !speakerNotes;
+
+    // Préparer les candidats OCR/Vision (limité en taille pour la persistance des jobs)
+    if (isVisualSlide && ocrCandidates.length < 12) {
+      for (const im of slideImages.slice(0, 2)) {
+        if (!im.mimeType) continue;
+        const imgBuf = await zip.file(im.mediaPath)?.async('nodebuffer');
+        if (imgBuf && imgBuf.length >= 4000 && imgBuf.length <= 1800000) {
+          ocrCandidates.push({
+            unitNum: slideNum,
+            mediaPath: im.mediaPath,
+            mimeType: im.mimeType,
+            sizeBytes: imgBuf.length,
+            base64: imgBuf.toString('base64')
+          });
+        }
+      }
+    }
+
+    if (isVisualSlide) {
+      issues.push(`Diapositive contenant ${slideImages.length} image(s)/schéma(s) avec peu de texte (${wordCount} mots) — analyse OCR/visuelle requise.`);
+    } else if (isEmptySlide) {
+      issues.push('Diapositive vide ou purement graphique — vérification manuelle recommandée.');
     }
 
     if (issues.length > 0) {
-      manualReviewSlides.push({ slideNum, title: slideTitle || `Diapositive ${slideNum}`, reason: issues.join(' ; ') });
+      manualReviewItems.push({ unitNum: slideNum, slideNum, title: slideTitle || `Diapositive ${slideNum}`, reason: issues.join(' ; ') });
     }
     if (slideNum === 1 && !presTitle) {
-      presTitle = (slideTitle || sourceFilename.replace(/\.(pptx|ppt)$/i, '')).slice(0, 105);
+      presTitle = (slideTitle || sourceFilename.replace(/\.(pptx|ppt)$/i, '')).slice(0, 110);
     }
 
-    slides.push({
-      slideNum,
+    units.push({
+      unitNum: slideNum,
+      unitLabel: 'Diapositive',
+      sourceFilename,
+      docType: 'pptx',
       title: slideTitle || `Diapositive ${slideNum}`,
+      headingDetected: isHeadingCandidate(slideTitle),
       lines,
       bullets,
       tables,
+      captions,
       speakerNotes,
+      imageCount: slideImages.length,
+      ocrText: '',
+      wordCount,
+      needsOcr: isVisualSlide,
       needsReview: issues.length > 0,
       reviewReason: issues.join(' ; ')
     });
   }
 
-  const overlap = detectCourseOverlap(existingCourses, sourceFilename, presTitle);
-  return buildStructuredFromPagesOrSlides({
-    course,
-    sourceFilename,
-    title: presTitle || sourceFilename.replace(/\.(pptx|ppt)$/i, ''),
-    items: slides,
+  return {
+    ok: true,
+    docType: 'pptx',
     unitLabel: 'Diapositive',
-    isPowerPoint: true,
-    tablesExtracted,
-    chartsExtracted,
-    speakerNotesExtracted,
-    manualReviewSlides,
-    overlap,
-    engine: 'Vercel Cloud OpenXML PPTX Extractor (Node.js)'
-  });
-}
-
-export async function analyzePdfBuffer(buffer, course, sourceFilename) {
-  const { default: pdfParse } = await import('pdf-parse/lib/pdf-parse.js');
-  const pages = [];
-  const manualReviewSlides = [];
-  let pageCounter = 0;
-
-  await pdfParse(buffer, {
-    pagerender: async (pageData) => {
-      pageCounter++;
-      const textContent = await pageData.getTextContent();
-      const rawLines = [];
-      let cur = '';
-      for (const item of textContent.items) {
-        cur += item.str + (item.hasEOL ? '\n' : ' ');
-      }
-      cur.split('\n').forEach((l) => {
-        const clean = l.replace(/\s+/g, ' ').trim();
-        if (clean.length >= 2) rawLines.push(clean);
-      });
-      const wc = rawLines.join(' ').split(/\s+/).filter((w) => w.length >= 2).length;
-      const isLow = wc < 12;
-      if (isLow) {
-        manualReviewSlides.push({
-          slideNum: pageCounter,
-          title: `Page ${pageCounter}`,
-          reason: `Peu de texte extractible (${wc} mots — PDF scanné ou schéma). Vérification manuelle recommandée.`
-        });
-      }
-      pages.push({
-        slideNum: pageCounter,
-        title: rawLines[0] ? rawLines[0].slice(0, 95) : `Page ${pageCounter}`,
-        lines: rawLines.slice(1),
-        bullets: [],
-        tables: [],
-        speakerNotes: '',
-        needsReview: isLow,
-        reviewReason: isLow ? 'Page scannée ou peu de texte' : ''
-      });
-      return cur;
-    }
-  });
-
-  if (!pages.length) {
-    return { ok: false, error: 'Impossible d’extraire les pages de ce PDF (fichier scanné ou protégé).' };
-  }
-
-  return buildStructuredFromPagesOrSlides({
-    course,
     sourceFilename,
-    title: course.title,
-    items: pages,
-    unitLabel: 'Page',
-    isPowerPoint: false,
-    tablesExtracted: 0,
-    chartsExtracted: 0,
-    speakerNotesExtracted: 0,
-    manualReviewSlides,
-    overlap: null,
-    engine: 'Vercel Cloud PDF Extractor (pdf-parse)'
-  });
+    detectedTitle: presTitle || sourceFilename.replace(/\.(pptx|ppt)$/i, ''),
+    detectedAuthor: authorMeta,
+    totalUnits: units.length,
+    units,
+    ocrCandidates,
+    stats: {
+      totalUnits: units.length,
+      tablesExtracted,
+      chartsExtracted,
+      smartArtExtracted,
+      speakerNotesExtracted,
+      imagesFound,
+      lowConfidenceUnits: manualReviewItems.map((m) => m.unitNum)
+    },
+    manualReviewItems,
+    engine: 'MedStudy Universal OpenXML Extractor (PPTX + SmartArt + Charts + Notes)'
+  };
 }
 
-function buildStructuredFromPagesOrSlides({
-  course, sourceFilename, title, items, unitLabel, isPowerPoint,
-  tablesExtracted, chartsExtracted, speakerNotesExtracted, manualReviewSlides, overlap, engine
-}) {
-  const n = items.length;
-  const targetLessons = n <= 8 ? 2 : (n <= 18 ? 3 : (n <= 28 ? 4 : 6));
-  const chunkSize = Math.max(2, Math.ceil(n / targetLessons));
+/**
+ * Extraction native des fichiers PowerPoint binaires anciens (.ppt OLE2) en pur Node.js
+ * Extrait TextCharsAtom (0x0FA0 UTF-16LE) et TextBytesAtom (0x0FA8 Latin-1)
+ */
+export async function extractLegacyPptDocument(buffer, sourceFilename) {
+  const sigCheck = validateFileMagicBytes(buffer, '.ppt');
+  if (!sigCheck.ok) return { ok: false, error: sigCheck.error };
 
-  const lessons = [];
-  const flashcards = [];
-  const qcms = [];
+  const blocks = [];
+  const seen = new Set();
+  let pos = 0;
+  const len = buffer.length;
 
-  for (let start = 0; start < n; start += chunkSize) {
-    const group = items.slice(start, start + chunkSize);
-    const lIdx = lessons.length + 1;
-    const lid = `${course.id}_L${lIdx}`;
-    const first = group[0].slideNum;
-    const last = group[group.length - 1].slideNum;
-    const rangeLbl = first === last ? `${unitLabel} ${first}` : `${unitLabel}s ${first}–${last}`;
-    const lessonTitle = (group[0].title && group[0].title.length >= 4) ? group[0].title : `Section ${lIdx} (${rangeLbl})`;
-
-    const sections = [];
-    const tables = [];
-    const memorize = [];
-
-    for (const s of group) {
-      const paras = [...(s.lines || [])];
-      if (s.speakerNotes) paras.push(`<em>[Note présentateur — ${unitLabel} ${s.slideNum}] :</em> ${s.speakerNotes}`);
-      sections.push({
-        heading: `${unitLabel} ${s.slideNum} — ${s.title}`,
-        slideNum: s.slideNum,
-        slideTitle: s.title,
-        paragraphs: paras,
-        bullets: s.bullets || []
-      });
-      (s.tables || []).forEach((t) => tables.push(t));
-
-      const allText = [...(s.lines || []), ...(s.bullets || [])];
-      for (const line of allText) {
-        if (memorize.length >= 6 || line.length < 18) continue;
-        if (/([=≥≤<>]|%|est un|est une|désigne|définition|article\s+\d+|classification)/i.test(line)) {
-          memorize.push({
-            id: `M_${lid}_${memorize.length + 1}`,
-            category: /([=≥≤<>]|%)/.test(line) ? 'Formule / Valeur clé' : 'Définition / Notion clé',
-            title: `${s.title} (${unitLabel} ${s.slideNum})`,
-            content: line,
-            pageRef: `${unitLabel} ${s.slideNum}`,
-            slideNum: s.slideNum,
-            slideTitle: s.title,
-            sourceFile: sourceFilename,
-            highlight: memorize.length < 3
-          });
+  // Scanner les en-têtes d'enregistrements PowerPoint (8 octets : recVer/Inst u16, recType u16, recLen u32)
+  while (pos + 8 <= len) {
+    const recType = buffer.readUInt16LE(pos + 2);
+    const recLen = buffer.readUInt32LE(pos + 4);
+    if ((recType === 0x0FA0 || recType === 0x0FA8) && recLen >= 6 && recLen <= 65536 && pos + 8 + recLen <= len) {
+      let rawText = '';
+      if (recType === 0x0FA0 && recLen % 2 === 0) {
+        rawText = buffer.subarray(pos + 8, pos + 8 + recLen).toString('utf16le');
+      } else if (recType === 0x0FA8) {
+        rawText = buffer.subarray(pos + 8, pos + 8 + recLen).toString('latin1');
+      }
+      const cleanedLines = rawText
+        .split(/[\r\n\v]+/)
+        .map((l) => cleanLine(l.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, ' ')))
+        .filter((l) => l.length >= 3 && /[a-zA-ZÉÈÊÀÂÎÔÙÇéèêàâîôùç0-9]/.test(l));
+      if (cleanedLines.length) {
+        const key = cleanedLines.join('|').toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          blocks.push(cleanedLines);
         }
       }
+      pos += 8 + recLen;
+    } else {
+      pos += 2;
     }
+  }
 
-    if (memorize.length < 2) {
-      for (const s of group) {
-        const cand = (s.lines && s.lines[0]) || (s.bullets && s.bullets[0]) || s.title;
-        if (cand && cand.length >= 12 && memorize.length < 3) {
-          memorize.push({
-            id: `M_${lid}_${memorize.length + 1}`,
-            category: 'Concept clé',
-            title: `${s.title} (${unitLabel} ${s.slideNum})`,
-            content: cand,
-            pageRef: `${unitLabel} ${s.slideNum}`,
-            slideNum: s.slideNum,
-            slideTitle: s.title,
-            sourceFile: sourceFilename,
-            highlight: memorize.length === 0
-          });
-        }
-      }
+  if (!blocks.length) {
+    return {
+      ok: false,
+      error: `Impossible d'extraire du texte lisible depuis le fichier binaire .ppt « ${sourceFilename} ». Convertissez-le en .pptx ou PDF si le document est chiffré ou uniquement composé d'images.`
+    };
+  }
+
+  // Regrouper les blocs de texte en diapositives logiques
+  const units = [];
+  const manualReviewItems = [];
+  const perSlide = Math.max(2, Math.ceil(blocks.length / Math.min(30, Math.max(4, Math.ceil(blocks.length / 3)))));
+  for (let i = 0; i < blocks.length; i += perSlide) {
+    const grp = blocks.slice(i, i + perSlide).flat();
+    const slideNum = units.length + 1;
+    const title = grp[0] ? grp[0].slice(0, 105) : `Diapositive ${slideNum}`;
+    const rest = grp.slice(1);
+    const bullets = [];
+    const lines = [];
+    for (const r of rest) {
+      if (/^[\-•*▪◦►]/.test(r)) bullets.push(r.replace(/^[\-•*▪◦►]+\s*/, '').trim());
+      else lines.push(r);
     }
-
-    const flagged = group.filter((g) => g.needsReview);
-    lessons.push({
-      id: lid,
-      courseId: course.id,
-      order: lIdx,
-      chapterTitle: lessonTitle,
-      title: lessonTitle,
-      durationMin: Math.max(8, Math.min(20, group.length * 3)),
-      sourceFile: sourceFilename,
-      sourceRef: `${sourceFilename} · ${rangeLbl}`,
-      slideRange: rangeLbl,
-      slideRefs: group.map((g) => ({ slideNum: g.slideNum, title: g.title })),
-      pageRefs: group.map((g) => g.slideNum),
-      bmCount: 0,
-      bmRefs: [],
-      priority: course.priority || 'medium',
-      priorityScore: 55,
-      bmWarning: '',
-      revisionVersion: 1,
-      majorUpdateNote: '',
+    const wc = grp.join(' ').split(/\s+/).filter((w) => w.length >= 2).length;
+    const reason = 'Format binaire .ppt ancien : texte extrait nativement, vérifier visuels, tableaux et ordre des diapositives.';
+    manualReviewItems.push({ unitNum: slideNum, slideNum, title, reason });
+    units.push({
+      unitNum: slideNum,
+      unitLabel: 'Diapositive',
+      sourceFilename,
+      docType: 'ppt',
+      title,
+      headingDetected: isHeadingCandidate(title),
+      lines,
+      bullets,
+      tables: [],
+      captions: [],
+      speakerNotes: '',
+      imageCount: 0,
+      ocrText: '',
+      wordCount: wc,
+      needsOcr: false,
       needsReview: true,
-      hasManualFlags: flagged.length > 0,
-      extractionNote: flagged.length
-        ? `Relecture manuelle recommandée (${flagged.map((f) => `${unitLabel} ${f.slideNum}`).join(', ')}).`
-        : `Brouillon extrait depuis ${sourceFilename} (${rangeLbl}) — à relire avant publication.`,
-      understand: {
-        intro: `Contenu extrait automatiquement depuis « ${sourceFilename} » (${rangeLbl}). Relisez et validez avant publication.`,
-        sections,
-        tables,
-        darija: '',
-        triad: {
-          toUnderstand: group.slice(0, 3).map((g) => `${unitLabel} ${g.slideNum} : ${g.title}`),
-          toMemorize: memorize.slice(0, 3).map((m) => `${m.title} (${m.pageRef})`),
-          toRecognizeInQcm: [`Terminologie exacte et valeurs clés de ${sourceFilename} (${rangeLbl}).`]
-        }
-      },
-      memorize
-    });
-
-    memorize.slice(0, 3).forEach((m, fi) => {
-      flashcards.push({
-        id: `FC_${lid}_${fi + 1}`,
-        courseId: course.id,
-        lessonId: lid,
-        type: /Formule/.test(m.category) ? 'formula' : 'definition',
-        question: `D’après ${m.pageRef} (« ${m.slideTitle} »), que faut-il retenir sur : ${m.title} ?`,
-        answer: m.content,
-        hint: `Source : ${sourceFilename} · ${m.pageRef}`,
-        pageRef: m.pageRef,
-        slideNum: m.slideNum,
-        slideTitle: m.slideTitle,
-        sourceFile: sourceFilename,
-        sourceType: 'ai_generated_practice',
-        needsReview: true
-      });
-    });
-
-    memorize.slice(0, 3).forEach((m, qi) => {
-      qcms.push({
-        id: `Q_${lid}_${qi + 1}`,
-        courseId: course.id,
-        lessonId: lid,
-        topic: `${m.slideTitle} (${m.pageRef})`,
-        sourceType: 'ai_generated_practice',
-        bmRef: '',
-        year: 'Entraînement IA',
-        pageRef: m.pageRef,
-        slideNum: m.slideNum,
-        slideTitle: m.slideTitle,
-        sourceFile: sourceFilename,
-        multiSelect: false,
-        isHard: false,
-        needsReview: true,
-        stem: `D’après le cours « ${title} » (${m.pageRef}), quelle affirmation est conforme au support ?`,
-        options: [
-          { key: 'A', text: m.content },
-          { key: 'B', text: `Cette notion est exclue de ${m.pageRef} [Distracteur IA à affiner]` },
-          { key: 'C', text: `L’inverse exact s’applique systématiquement [Distracteur IA à affiner]` },
-          { key: 'D', text: `Aucune proposition n’est mentionnée dans ${m.pageRef}` }
-        ],
-        correct: ['A'],
-        explanation: `Source exacte (${sourceFilename} · ${m.pageRef}) : ${m.content}`,
-        wrongReasons: {
-          B: `Contredit ${m.pageRef}.`,
-          C: `Contredit ${m.pageRef}.`,
-          D: `La réponse A reprend le contenu de ${m.pageRef}.`
-        },
-        courseRef: `${sourceFilename} · ${m.pageRef}`
-      });
+      reviewReason: reason
     });
   }
 
-  const aiExtraction = {
-    analyzedAt: new Date().toISOString(),
-    engine,
-    totalPages: n,
-    lowConfidencePages: manualReviewSlides.map((s) => s.slideNum),
-    warnings: manualReviewSlides.length ? [`${manualReviewSlides.length} ${unitLabel.toLowerCase()}(s) signalée(s) pour relecture manuelle.`] : [],
-    lessonsExtracted: lessons.length,
-    flashcardsCreated: flashcards.length,
-    qcmsCreated: qcms.length,
-    status: 'needs_review'
+  return {
+    ok: true,
+    docType: 'ppt',
+    unitLabel: 'Diapositive',
+    sourceFilename,
+    detectedTitle: sourceFilename.replace(/\.ppt$/i, '').replace(/[_-]+/g, ' ').trim(),
+    detectedAuthor: '',
+    totalUnits: units.length,
+    units,
+    ocrCandidates: [],
+    stats: {
+      totalUnits: units.length,
+      tablesExtracted: 0,
+      chartsExtracted: 0,
+      smartArtExtracted: 0,
+      speakerNotesExtracted: 0,
+      imagesFound: 0,
+      lowConfidenceUnits: manualReviewItems.map((m) => m.unitNum)
+    },
+    manualReviewItems,
+    engine: 'MedStudy Universal OLE2 Binary Extractor (.ppt)'
+  };
+}
+
+/**
+ * Reconstruit les lignes et détecte les tableaux à partir de la géométrie X/Y PDF.js
+ */
+function reconstructPdfPageGeometry(items, pageNum) {
+  const positioned = [];
+  const heights = [];
+  for (const it of (items || [])) {
+    const str = String(it.str || '');
+    if (!str.trim()) continue;
+    const tx = Array.isArray(it.transform) ? it.transform : [1, 0, 0, 10, 0, 0];
+    const x = Number(tx[4]) || 0;
+    const y = Number(tx[5]) || 0;
+    const h = Math.abs(Number(it.height) || Number(tx[3]) || 10);
+    const w = Math.abs(Number(it.width) || str.length * h * 0.5);
+    heights.push(h);
+    positioned.push({ str, x, y, h, w });
+  }
+
+  if (!positioned.length) {
+    return { title: `Page ${pageNum}`, headingLines: [], lines: [], bullets: [], tables: [], medianHeight: 10 };
+  }
+
+  heights.sort((a, b) => a - b);
+  const medianHeight = heights[Math.floor(heights.length / 2)] || 10;
+
+  // Regrouper par coordonnée Y (tolérance 3.8 pt), du haut vers le bas (Y décroissant en PDF)
+  positioned.sort((a, b) => b.y - a.y || a.x - b.x);
+  const rows = [];
+  for (const item of positioned) {
+    const lastRow = rows[rows.length - 1];
+    if (lastRow && Math.abs(lastRow.y - item.y) <= Math.max(3.8, medianHeight * 0.42)) {
+      lastRow.items.push(item);
+      lastRow.maxH = Math.max(lastRow.maxH, item.h);
+    } else {
+      rows.push({ y: item.y, maxH: item.h, items: [item] });
+    }
+  }
+
+  const parsedRows = rows.map((row) => {
+    row.items.sort((a, b) => a.x - b.x);
+    const cells = [];
+    let curCell = '';
+    let prevEnd = null;
+    for (const it of row.items) {
+      if (prevEnd !== null) {
+        const gap = it.x - prevEnd;
+        if (gap > Math.max(24, medianHeight * 2.2)) {
+          if (curCell.trim()) cells.push(cleanLine(curCell));
+          curCell = it.str;
+        } else if (gap > 1.5 && !curCell.endsWith(' ') && !it.str.startsWith(' ')) {
+          curCell += ' ' + it.str;
+        } else {
+          curCell += it.str;
+        }
+      } else {
+        curCell = it.str;
+      }
+      prevEnd = it.x + it.w;
+    }
+    if (curCell.trim()) cells.push(cleanLine(curCell));
+    const fullText = cleanLine(cells.join(' '));
+    const isLargeFont = row.maxH >= medianHeight * 1.18 && fullText.length >= 4 && fullText.length <= 120;
+    return { fullText, cells, isLargeFont, maxH: row.maxH };
+  }).filter((r) => r.fullText.length >= 2);
+
+  // Détecter les blocs tabulaires (≥ 3 lignes consécutives avec 2–5 colonnes alignées)
+  const tables = [];
+  const usedAsTable = new Set();
+  let runStart = -1;
+  for (let i = 0; i <= parsedRows.length; i++) {
+    const r = parsedRows[i];
+    const isMultiCol = r && r.cells.length >= 2 && r.cells.length <= 5 && r.fullText.length <= 190 && !/^[\-•*▪◦►]/.test(r.fullText);
+    if (isMultiCol) {
+      if (runStart < 0) runStart = i;
+    } else {
+      if (runStart >= 0 && i - runStart >= 3) {
+        const tblSlice = parsedRows.slice(runStart, i);
+        const colCnt = Math.min(5, Math.max(...tblSlice.map((x) => x.cells.length)));
+        const norm = tblSlice.map((x) => {
+          const c = x.cells.slice(0, colCnt);
+          while (c.length < colCnt) c.push('—');
+          return c;
+        });
+        tables.push({
+          title: `Tableau extrait — Page ${pageNum}`,
+          pageNum,
+          pageRef: `Page ${pageNum}`,
+          isChart: false,
+          provenance: 'source_explicit',
+          headers: norm[0],
+          rows: norm.slice(1)
+        });
+        for (let k = runStart; k < i; k++) usedAsTable.add(k);
+      }
+      runStart = -1;
+    }
+  }
+
+  let title = '';
+  const headingLines = [];
+  const lines = [];
+  const bullets = [];
+
+  parsedRows.forEach((r, idx) => {
+    if (usedAsTable.has(idx)) return;
+    const txt = r.fullText;
+    if (isAdminBoilerplate(txt)) return;
+
+    const isHead = r.isLargeFont || isHeadingCandidate(txt);
+    if (!title && txt.length >= 4 && txt.length <= 120 && !/^[\-•*▪◦►]/.test(txt)) {
+      title = txt;
+      if (isHead) headingLines.push(txt);
+      return;
+    }
+    if (isHead && txt.length <= 115) {
+      headingLines.push(txt);
+    }
+
+    if (/^([\-\•\*\▪\◦\►▸✓➢➤]|\d{1,2}\s*[\)\.]|[a-z]\))\s+\S/.test(txt)) {
+      const cleaned = txt.replace(/^[\-\•\*\▪\◦\►▸✓➢➤]+\s*/, '').trim();
+      if (cleaned.length >= 3) bullets.push(cleaned);
+    } else {
+      lines.push(txt);
+    }
+  });
+
+  const mergeWrapped = (arr) => {
+    const out = [];
+    let buf = '';
+    for (const raw of arr) {
+      const ln = cleanLine(raw);
+      if (!ln) continue;
+      const isHead = isHeadingCandidate(ln);
+      const isColonLabel = /^[A-ZÉÈÊÀÂÎÔÙÇ][^:]{2,42}\s*:\s*\S/.test(ln);
+      if (!buf) { buf = ln; continue; }
+      const bufEnds = /[\.\!\?\:\;]\s*$/.test(buf);
+      const bufHead = isHeadingCandidate(buf);
+      const startsLower = /^[a-zéèêàâîôùç,\)\;]/.test(ln);
+      if (!isHead && !isColonLabel && !bufHead && buf.length < 360 && (!bufEnds || startsLower)) {
+        if (/[a-zA-ZéèêàâîôùçÉÈÊÀÂÎÔÙÇ]-$/.test(buf) && /^[a-zéèêàâîôùç]/.test(ln)) {
+          buf = buf.slice(0, -1) + ln;
+        } else {
+          buf = `${buf} ${ln}`;
+        }
+      } else {
+        out.push(buf);
+        buf = ln;
+      }
+    }
+    if (buf) out.push(buf);
+    return out;
   };
 
-  const pptImport = isPowerPoint ? {
-    isPowerPoint: true,
-    originalFilename: sourceFilename,
-    presentationTitle: title,
-    slidesProcessed: n,
-    chaptersCreated: lessons.length,
-    lessonsCreated: lessons.length,
-    flashcardsGenerated: flashcards.length,
-    qcmsGenerated: qcms.length,
-    tablesExtracted,
-    chartsExtracted,
-    speakerNotesExtracted,
-    imagesOcrCount: 0,
-    manualReviewSlides,
-    importStatus: manualReviewSlides.length ? 'needs_review' : 'ready_for_review',
-    overlapInfo: overlap,
-    importedAt: new Date().toISOString()
-  } : null;
+  return {
+    title: title || `Page ${pageNum}`,
+    headingLines,
+    lines: mergeWrapped(lines),
+    bullets: mergeWrapped(bullets),
+    tables,
+    medianHeight
+  };
+}
 
-  return { ok: true, lessons, flashcards, qcms, aiExtraction, pptImport };
+/**
+ * Extraction complète PDF page par page (géométrie + tableaux + puces + titres + drapeaux OCR)
+ */
+export async function extractPdfDocument(buffer, sourceFilename) {
+  const sigCheck = validateFileMagicBytes(buffer, '.pdf');
+  if (!sigCheck.ok) return { ok: false, error: sigCheck.error };
+
+  const { default: pdfParse } = await import('pdf-parse/lib/pdf-parse.js');
+  const units = [];
+  const manualReviewItems = [];
+  let tablesExtracted = 0;
+  let pageCounter = 0;
+
+  const parsedInfo = await pdfParse(buffer, {
+    pagerender: async (pageData) => {
+      pageCounter++;
+      const textContent = await pageData.getTextContent({
+        normalizeWhitespace: false,
+        disableCombineTextItems: false
+      });
+      const geom = reconstructPdfPageGeometry(textContent.items, pageCounter);
+      tablesExtracted += geom.tables.length;
+
+      const joined = `${geom.title} ${geom.lines.join(' ')} ${geom.bullets.join(' ')}`;
+      const wordCount = joined.split(/\s+/).filter((w) => w.length >= 2).length;
+      const isLow = wordCount < 14 && geom.tables.length === 0;
+      const reviewReason = isLow
+        ? `Page ${pageCounter} à faible densité textuelle (${wordCount} mots — probable scan, schéma ou diapositive image). Vérification ou OCR recommandé.`
+        : '';
+
+      if (isLow) {
+        manualReviewItems.push({ unitNum: pageCounter, slideNum: pageCounter, title: geom.title, reason: reviewReason });
+      }
+
+      units.push({
+        unitNum: pageCounter,
+        unitLabel: 'Page',
+        sourceFilename,
+        docType: 'pdf',
+        title: geom.title,
+        headingDetected: geom.headingLines.length > 0 || isHeadingCandidate(geom.title),
+        headingLines: geom.headingLines,
+        lines: geom.lines,
+        bullets: geom.bullets,
+        tables: geom.tables,
+        captions: [],
+        speakerNotes: '',
+        imageCount: isLow ? 1 : 0,
+        ocrText: '',
+        wordCount,
+        needsOcr: isLow,
+        needsReview: isLow,
+        reviewReason
+      });
+      return joined;
+    }
+  });
+
+  if (!units.length) {
+    return { ok: false, error: `Impossible d'extraire les pages de « ${sourceFilename} » (PDF protégé ou corrompu).` };
+  }
+
+  const infoTitle = cleanLine(parsedInfo?.info?.Title || '');
+  const infoAuthor = cleanLine(parsedInfo?.info?.Author || '');
+  const safeInfoTitle = (infoTitle.length >= 4 && !/microsoft|powerpoint|untitled|document\d*/i.test(infoTitle)) ? infoTitle : '';
+
+  return {
+    ok: true,
+    docType: 'pdf',
+    unitLabel: 'Page',
+    sourceFilename,
+    detectedTitle: safeInfoTitle || units[0]?.title || sourceFilename.replace(/\.pdf$/i, ''),
+    detectedAuthor: infoAuthor,
+    totalUnits: units.length,
+    units,
+    ocrCandidates: [],
+    stats: {
+      totalUnits: units.length,
+      tablesExtracted,
+      chartsExtracted: 0,
+      smartArtExtracted: 0,
+      speakerNotesExtracted: 0,
+      imagesFound: manualReviewItems.length,
+      lowConfidenceUnits: manualReviewItems.map((m) => m.unitNum)
+    },
+    manualReviewItems,
+    engine: 'MedStudy Universal PDF Geometry Extractor (pdf-parse + Table/Heading Reconstruction)'
+  };
+}
+
+/**
+ * Point d'entrée universel multi-fichiers (PDF, PPTX, PPT, TXT/MD)
+ */
+export async function extractCourseFiles(fileEntries) {
+  const allUnits = [];
+  const allReviewItems = [];
+  const allOcrCandidates = [];
+  const fileSummaries = [];
+  const totals = {
+    totalUnits: 0,
+    tablesExtracted: 0,
+    chartsExtracted: 0,
+    smartArtExtracted: 0,
+    speakerNotesExtracted: 0,
+    imagesFound: 0,
+    lowConfidenceUnits: []
+  };
+
+  let primaryDocType = 'pdf';
+  let primaryUnitLabel = 'Page';
+  let detectedTitle = '';
+  let detectedAuthor = '';
+  const engines = new Set();
+
+  for (const entry of fileEntries) {
+    const ext = (String(entry.originalName || '').match(/(\.[a-zA-Z0-9]+)$/) || ['', ''])[1].toLowerCase();
+    let res;
+    if (ext === '.pptx') {
+      res = await extractPptxDocument(entry.buffer, entry.originalName);
+      primaryDocType = 'pptx';
+      primaryUnitLabel = 'Diapositive';
+    } else if (ext === '.ppt') {
+      res = await extractLegacyPptDocument(entry.buffer, entry.originalName);
+      primaryDocType = 'ppt';
+      primaryUnitLabel = 'Diapositive';
+    } else if (ext === '.pdf') {
+      res = await extractPdfDocument(entry.buffer, entry.originalName);
+    } else if (ext === '.txt' || ext === '.md') {
+      const txt = entry.buffer.toString('utf8');
+      const rawLines = txt.split(/\r?\n/).map(cleanLine).filter(Boolean);
+      res = {
+        ok: true,
+        docType: 'text',
+        unitLabel: 'Section',
+        sourceFilename: entry.originalName,
+        detectedTitle: rawLines[0] || entry.originalName,
+        detectedAuthor: '',
+        totalUnits: 1,
+        units: [{
+          unitNum: 1,
+          unitLabel: 'Section',
+          sourceFilename: entry.originalName,
+          docType: 'text',
+          title: rawLines[0] || entry.originalName,
+          headingDetected: true,
+          lines: rawLines.slice(1),
+          bullets: [],
+          tables: [],
+          captions: [],
+          speakerNotes: '',
+          imageCount: 0,
+          ocrText: '',
+          wordCount: rawLines.join(' ').split(/\s+/).length,
+          needsOcr: false,
+          needsReview: false,
+          reviewReason: ''
+        }],
+        ocrCandidates: [],
+        stats: { totalUnits: 1, tablesExtracted: 0, chartsExtracted: 0, smartArtExtracted: 0, speakerNotesExtracted: 0, imagesFound: 0, lowConfidenceUnits: [] },
+        manualReviewItems: [],
+        engine: 'MedStudy Text/Markdown Extractor'
+      };
+    } else {
+      continue;
+    }
+
+    if (!res.ok) return res;
+    if (!detectedTitle && res.detectedTitle) detectedTitle = res.detectedTitle;
+    if (!detectedAuthor && res.detectedAuthor) detectedAuthor = res.detectedAuthor;
+    engines.add(res.engine);
+
+    fileSummaries.push({
+      fileId: entry.fileId || '',
+      originalName: entry.originalName,
+      docType: res.docType,
+      unitLabel: res.unitLabel,
+      totalUnits: res.totalUnits,
+      tablesExtracted: res.stats.tablesExtracted,
+      chartsExtracted: res.stats.chartsExtracted,
+      speakerNotesExtracted: res.stats.speakerNotesExtracted,
+      flaggedUnits: res.manualReviewItems.length
+    });
+
+    for (const u of res.units) allUnits.push(u);
+    for (const m of res.manualReviewItems) allReviewItems.push({ ...m, sourceFilename: entry.originalName });
+    for (const oc of (res.ocrCandidates || [])) allOcrCandidates.push({ ...oc, sourceFilename: entry.originalName });
+
+    totals.totalUnits += res.stats.totalUnits;
+    totals.tablesExtracted += res.stats.tablesExtracted;
+    totals.chartsExtracted += res.stats.chartsExtracted;
+    totals.smartArtExtracted += res.stats.smartArtExtracted || 0;
+    totals.speakerNotesExtracted += res.stats.speakerNotesExtracted;
+    totals.imagesFound += res.stats.imagesFound;
+    totals.lowConfidenceUnits.push(...res.stats.lowConfidenceUnits);
+  }
+
+  if (!allUnits.length) {
+    return { ok: false, error: 'Aucun document PDF ou PowerPoint exploitable trouvé pour ce cours.' };
+  }
+
+  return {
+    ok: true,
+    docType: primaryDocType,
+    unitLabel: primaryUnitLabel,
+    detectedTitle,
+    detectedAuthor,
+    fileSummaries,
+    units: allUnits,
+    ocrCandidates: allOcrCandidates,
+    manualReviewItems: allReviewItems,
+    stats: totals,
+    engine: Array.from(engines).join(' + ')
+  };
 }

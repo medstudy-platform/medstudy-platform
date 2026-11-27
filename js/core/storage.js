@@ -63,6 +63,9 @@ window.EpiStorage = (function () {
   function hydrateFromServer(progressObj, user) {
     serverMode = true;
     serverProfile = normalizeProfile(progressObj, user && user.name, user && user.id);
+    if (serverProfile.theme === 'dark' || serverProfile.theme === 'light') {
+      setTheme(serverProfile.theme);
+    }
     lastSyncError = null;
     return serverProfile;
   }
@@ -240,19 +243,47 @@ window.EpiStorage = (function () {
         studied: false,
         mastered: false,
         stepAVisited: false,
+        understandCompletedIds: [],
+        activeRecallDoneIds: [],
         memCheckedIds: [],
         memDeclaredAll: false,
+        lastActivePhase: null,
+        lastActiveStepByPhase: {},
         miniTestBest: null,
         miniTestAttempts: 0,
         lastMiniTestScore: null,
         lastStudiedAt: null,
         masteredAt: null,
-        seenRevisionVersion: 1
+        seenRevisionVersion: 1,
+        stepProgressVersion: 2
       };
-    } else if (profile.lessons[lessonId].seenRevisionVersion == null) {
-      profile.lessons[lessonId].seenRevisionVersion = 1;
+    } else {
+      const rec = profile.lessons[lessonId];
+      if (rec.seenRevisionVersion == null) rec.seenRevisionVersion = 1;
+      if (!Array.isArray(rec.understandCompletedIds)) rec.understandCompletedIds = [];
+      if (!Array.isArray(rec.activeRecallDoneIds)) rec.activeRecallDoneIds = [];
+      if (!Array.isArray(rec.memCheckedIds)) rec.memCheckedIds = [];
+      if (!rec.lastActiveStepByPhase || typeof rec.lastActiveStepByPhase !== 'object') rec.lastActiveStepByPhase = {};
+      if (rec.lastActivePhase === undefined) rec.lastActivePhase = null;
     }
     return profile.lessons[lessonId];
+  }
+
+  function getTheme() {
+    try {
+      return window.localStorage.getItem('medstudy_theme') === 'dark' ? 'dark' : 'light';
+    } catch (e) {
+      return 'light';
+    }
+  }
+
+  function setTheme(theme) {
+    const val = theme === 'dark' ? 'dark' : 'light';
+    try { window.localStorage.setItem('medstudy_theme', val); } catch (e) {}
+    if (typeof document !== 'undefined' && document.documentElement) {
+      document.documentElement.setAttribute('data-theme', val);
+    }
+    return val;
   }
 
   function isLessonFlaggedUpdated(profile, lesson) {
@@ -331,6 +362,8 @@ window.EpiStorage = (function () {
     deleteProfile,
     resetActiveProfile,
     ensureLessonRecord,
+    getTheme,
+    setTheme,
     isLessonFlaggedUpdated,
     acknowledgeLessonUpdate,
     ensureDailyLog,

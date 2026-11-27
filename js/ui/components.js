@@ -63,6 +63,9 @@ window.EpiUI = (function () {
     if (qcm.sourceType === 'bm_original') {
       return `<span class="badge badge-bm">BM Épidémiologie · Original (${esc(qcm.bmRef)}, ${esc(qcm.year)})</span>`;
     }
+    if (qcm.sourceType === 'source_exam_original') {
+      return `<span class="badge badge-medium">📋 Question extraite du support${qcm.pageRef ? ' · ' + esc(qcm.pageRef) : ''}</span>`;
+    }
     if (qcm.sourceType === 'ai_generated_practice') {
       return `<span class="badge badge-ai">✨ QCM d’entraînement généré par IA${qcm.pageRef ? ' · ' + esc(qcm.pageRef) : ''}</span>`;
     }
@@ -162,44 +165,55 @@ window.EpiUI = (function () {
 
     let feedbackHtml = '';
     if (submitted) {
+      const fmt = window.EpiFormat;
+      const fmtInline = (t) => (fmt ? fmt.enhanceInlineText(t, { skipLeadTerm: true }) : esc(t));
+      const fmtAnswer = (t) => (fmt ? fmt.renderRichAnswer(t) : esc(t));
+
       const wrongKeys = Object.keys(qcm.wrongReasons || {});
       const wrongsHtml = wrongKeys.length
-        ? `<div style="margin-top:10px;"><strong>Pourquoi les autres choix sont faux :</strong><ul class="wrong-reasons-list">${wrongKeys.map(k => `<li><strong>${esc(k)} :</strong> ${esc(qcm.wrongReasons[k])}</li>`).join('')}</ul></div>`
+        ? `<div class="edu-qcm-wrongs">
+             <h4 class="edu-h4" style="margin:12px 0 6px;">Pourquoi les autres propositions sont fausses</h4>
+             <ul class="edu-qcm-wrongs-list">${wrongKeys.map(k => `<li><span class="edu-opt-mini">${esc(k)}</span><span>${fmtInline(qcm.wrongReasons[k])}</span></li>`).join('')}</ul>
+           </div>`
         : '';
 
       const bmErrHtml = qcm.bmError
-        ? `<div class="alert alert-danger" style="margin-top:12px;margin-bottom:0;">
-             ${window.EpiIcons.get('alert', 18)}
-             <div><strong>⚠️ Erreur connue du corrigé BM (imprime « ${esc(qcm.bmError.bmKey)} ») :</strong> ${esc(qcm.bmError.note)}</div>
+        ? `<div class="edu-callout edu-box-warning" style="margin-top:12px;margin-bottom:0;">
+             <div class="edu-callout-head"><span class="edu-callout-tag">${window.EpiIcons.get('alert', 14)}<span>Erreur connue du corrigé BM (imprime « ${esc(qcm.bmError.bmKey)} »)</span></span></div>
+             <div class="edu-callout-body">${fmtInline(qcm.bmError.note)}</div>
            </div>`
         : '';
 
       const unansHtml = qcm.bmUnanswered
-        ? `<div class="alert alert-info" style="margin-top:12px;margin-bottom:0;">
-             ${window.EpiIcons.get('sparkle', 18)}
-             <div><strong>Corrigé manquant (/) dans la BM :</strong> résolu à partir du cours officiel de votre professeur.</div>
+        ? `<div class="edu-callout edu-box-concept" style="margin-top:12px;margin-bottom:0;">
+             <div class="edu-callout-head"><span class="edu-callout-tag">${window.EpiIcons.get('sparkle', 14)}<span>Corrigé manquant (/) dans la BM</span></span></div>
+             <div class="edu-callout-body">Résolu fidèlement à partir du support officiel de votre professeur.</div>
            </div>`
         : '';
 
       feedbackHtml = `
         <div class="qcm-feedback ${state.isCorrect ? 'ok' : 'ko'}">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-            <strong style="color:${state.isCorrect ? '#065f46' : '#991b1b'};">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+            <strong style="font-size:15px;color:${state.isCorrect ? 'var(--sem-green)' : 'var(--sem-red)'};">
               ${state.isCorrect ? '✅ Bonne réponse !' : '❌ Réponse incorrecte ou incomplète'}
             </strong>
             <span class="badge ${state.isCorrect ? 'badge-green' : 'badge-red'}">Bonne(s) réponse(s) : ${qcm.correct.join(', ')}</span>
           </div>
-          <div><strong>Explication (source cours) :</strong> ${esc(qcm.explanation)}</div>
+          <div class="edu-qcm-explanation">
+            <h4 class="edu-h4" style="margin:0 0 6px;">Explication sourcée (cours officiel)</h4>
+            <div class="edu-callout-body">${fmtAnswer(qcm.explanation)}</div>
+          </div>
           ${wrongsHtml}
           ${bmErrHtml}
           ${unansHtml}
-          <div style="margin-top:10px;font-size:12.5px;color:#64748b;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+          <div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--border);font-size:12.5px;color:var(--text-light);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
             <span><strong>Référence cours :</strong> ${esc(qcm.courseRef)}</span>
             ${options.showLessonLink ? `<button class="btn btn-ghost btn-sm" data-action="go-lesson" data-course="${esc(qcm.courseId)}" data-lesson="${esc(qcm.lessonId)}" data-step="A">Revoir la leçon (${esc(qcm.lessonId)}) →</button>` : ''}
           </div>
         </div>`;
     }
 
+    const fmtStem = window.EpiFormat ? window.EpiFormat.enhanceInlineText(qcm.stem, { skipLeadTerm: true }) : esc(qcm.stem);
     return `
       <div class="qcm-card" id="${esc(prefix)}_${esc(qcm.id)}">
         <div class="qcm-meta">
@@ -207,9 +221,9 @@ window.EpiUI = (function () {
           <span class="badge badge-neutral">${isMulti ? 'Choix multiple(s)' : 'Choix unique'}</span>
           ${qcm.isHard ? '<span class="badge badge-high">Piège / Difficile</span>' : ''}
           ${qcm.bmError ? '<span class="badge badge-red">⚠️ Corrigé BM erroné</span>' : ''}
-          <span style="margin-left:auto;font-size:12px;color:#64748b;">${esc(qcm.topic)}</span>
+          <span style="margin-left:auto;font-size:12px;color:var(--text-light);">${esc(qcm.topic)}</span>
         </div>
-        <div class="qcm-stem">${options.number ? `<span style="color:#2563eb;">Q${options.number}.</span> ` : ''}${esc(qcm.stem)}</div>
+        <div class="qcm-stem">${options.number ? `<span class="edu-qcm-num">Q${options.number}</span> ` : ''}${fmtStem}</div>
         ${qcm.table ? `<div class="data-table-wrap">${qcm.table}</div>` : ''}
         <div class="qcm-options">${optsHtml}</div>
         ${!submitted && !options.hideSubmit ? `

@@ -6,12 +6,12 @@
 window.EpiAPI = (function () {
   const isHttp = window.location.protocol === 'http:' || window.location.protocol === 'https:';
 
-  async function request(method, path, body, extraHeaders) {
-    const opts = {
+  async function request(method, path, body, extraHeaders, extraFetchOpts) {
+    const opts = Object.assign({
       method,
       credentials: 'same-origin',
       headers: Object.assign({}, extraHeaders || {})
-    };
+    }, extraFetchOpts || {});
     if (body !== undefined && body !== null) {
       if (body instanceof ArrayBuffer || body instanceof Uint8Array || body instanceof Blob) {
         opts.body = body;
@@ -50,7 +50,7 @@ window.EpiAPI = (function () {
     // Étudiant & Catalogue publié
     getCatalog: () => request('GET', '/api/catalog'),
     getProgress: () => request('GET', '/api/progress'),
-    saveProgress: (progress) => request('PUT', '/api/progress', { progress }),
+    saveProgress: (progress) => request('PUT', '/api/progress', { progress }, null, { keepalive: true }),
     fileUrl: (fileId) => `/api/files/${encodeURIComponent(fileId)}`,
 
     // Admin CMS (strictement vérifié côté serveur : 401/403 si non-admin)
@@ -112,6 +112,20 @@ window.EpiAPI = (function () {
       request('DELETE', `/api/admin/courses/${encodeURIComponent(courseId)}/files/${encodeURIComponent(fileId)}`),
     analyzeCourse: (courseId) =>
       request('POST', `/api/admin/courses/${encodeURIComponent(courseId)}/analyze`, {}),
+    startImportJob: (courseId) =>
+      request('POST', `/api/admin/courses/${encodeURIComponent(courseId)}/jobs`, {}),
+    getCourseJobs: (courseId) =>
+      request('GET', `/api/admin/courses/${encodeURIComponent(courseId)}/jobs`),
+    getImportJob: (jobId) =>
+      request('GET', `/api/admin/jobs/${encodeURIComponent(jobId)}`),
+    stepImportJob: (jobId, retryStage) =>
+      request('POST', `/api/admin/jobs/${encodeURIComponent(jobId)}/step`, retryStage ? { retryStage } : {}),
+    regenerateLesson: (courseId, lessonId) =>
+      request('POST', `/api/admin/courses/${encodeURIComponent(courseId)}/lessons/${encodeURIComponent(lessonId)}/regenerate`, {}),
+    runQualityCheck: (courseId, payload) =>
+      request('POST', `/api/admin/courses/${encodeURIComponent(courseId)}/quality-check`, payload || {}),
+    approveCourse: (courseId, publish, forceOverride) =>
+      request('POST', `/api/admin/courses/${encodeURIComponent(courseId)}/approve`, { publish: publish !== false, forceOverride: !!forceOverride }),
     importWorkspacePpts: () =>
       request('POST', '/api/admin/import-workspace-ppts', {}),
     resolveOverlap: (courseId, action, targetCourseId) =>

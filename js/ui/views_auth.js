@@ -18,8 +18,8 @@ window.EpiViewsAuth = (function () {
           <div class="auth-brand">
             <div class="brand-mark" style="width:48px;height:48px;border-radius:14px;">${icon('stethoscope', 26)}</div>
             <div>
-              <h1 style="margin:0;font-size:22px;color:#0f1e3a;">MedStudy</h1>
-              <div style="font-size:13px;color:#64748b;">Plateforme Médicale d’Étude & CMS Propriétaire</div>
+              <h1 style="margin:0;font-size:22px;color:var(--navy);">MedStudy</h1>
+              <div style="font-size:13px;color:var(--text-light);">Plateforme Médicale d’Étude & CMS Propriétaire</div>
             </div>
           </div>
 
@@ -47,21 +47,21 @@ window.EpiViewsAuth = (function () {
 
             ${isLocalHost ? `
               <div class="auth-hint-box">
-                <div style="font-weight:700;color:#0f1e3a;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+                <div style="font-weight:700;color:var(--navy);margin-bottom:6px;display:flex;align-items:center;gap:6px;">
                   ${icon('shield', 15)} Accès local sécurisé (contrôle des rôles côté serveur)
                 </div>
-                <div style="font-size:12.5px;color:#475569;line-height:1.55;">
+                <div style="font-size:12.5px;color:var(--text-muted);line-height:1.55;">
                   • <strong>Administrateur (Propriétaire) :</strong> <code>admin@medstudy.local</code> / <code>AdminMed2026!</code><br>
                   • <strong>Compte Étudiant démo :</strong> <code>etudiant@medstudy.local</code> / <code>Etudiant2026!</code><br>
-                  <span style="color:#64748b;">Pensez à personnaliser le mot de passe administrateur dans <em>Administration → Sécurité</em>.</span>
+                  <span style="color:var(--text-light);">Pensez à personnaliser le mot de passe administrateur dans <em>Administration → Sécurité</em>.</span>
                 </div>
               </div>
             ` : `
               <div class="auth-hint-box">
-                <div style="font-weight:700;color:#0f1e3a;margin-bottom:4px;display:flex;align-items:center;gap:6px;">
+                <div style="font-weight:700;color:var(--navy);margin-bottom:4px;display:flex;align-items:center;gap:6px;">
                   ${icon('shield', 15)} Espace Étudiant & Administration sécurisé
                 </div>
-                <div style="font-size:12.5px;color:#475569;line-height:1.5;">
+                <div style="font-size:12.5px;color:var(--text-muted);line-height:1.5;">
                   Nouvel étudiant ? Utilisez l’onglet <strong>Inscription étudiant</strong> pour créer votre compte personnel et sauvegarder automatiquement votre progression et vos révisions.
                 </div>
               </div>
@@ -84,7 +84,7 @@ window.EpiViewsAuth = (function () {
                 ${busy ? 'Création du compte…' : 'Créer mon compte étudiant'}
               </button>
             </form>
-            <div class="auth-hint-box" style="font-size:12.5px;color:#475569;">
+            <div class="auth-hint-box" style="font-size:12.5px;color:var(--text-muted);">
               L’inscription publique crée exclusivement un compte <strong>Étudiant</strong> (rôle verrouillé côté serveur). Votre progression personnelle démarre à 0 % et est sauvegardée automatiquement.
             </div>
           `}

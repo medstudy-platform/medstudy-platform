@@ -41,7 +41,14 @@ window.EpiIcons = (function () {
     layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
     archive: '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>',
     refresh: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
-    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+    circle: '<circle cx="12" cy="12" r="9"/>',
+    disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/>',
+    chevronDown: '<polyline points="6 9 12 15 18 9"/>',
+    chevronUp: '<polyline points="18 15 12 9 6 15"/>',
+    sun: '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
+    moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
+    listChecks: '<path d="m3 17 2 2 4-4"/><path d="m3 7 2 2 4-4"/><path d="M13 6h8"/><path d="M13 12h8"/><path d="M13 18h8"/>'
   };
 
   function get(name, size) {
@@ -58,13 +65,13 @@ window.EpiIcons = (function () {
     const offset = c - (Math.min(100, Math.max(0, pct)) / 100) * c;
     const col = color || '#2563eb';
     return `
-      <svg width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" style="flex-shrink:0">
-        <circle cx="${s/2}" cy="${s/2}" r="${r}" fill="none" stroke="#e2e8f0" stroke-width="${stroke}"/>
+      <svg width="${s}" height="${s}" viewBox="0 0 ${s} ${s}" style="flex-shrink:0;color:var(--navy);">
+        <circle cx="${s/2}" cy="${s/2}" r="${r}" fill="none" stroke="var(--border)" stroke-width="${stroke}"/>
         <circle cx="${s/2}" cy="${s/2}" r="${r}" fill="none" stroke="${col}" stroke-width="${stroke}"
           stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${offset.toFixed(1)}"
           stroke-linecap="round" transform="rotate(-90 ${s/2} ${s/2})"/>
         <text x="50%" y="50%" dominant-baseline="central" text-anchor="middle"
-          font-size="${Math.round(s * 0.24)}" font-weight="800" fill="#0f1e3a">${pct}%</text>
+          font-size="${Math.round(s * 0.24)}" font-weight="800" fill="currentColor">${pct}%</text>
       </svg>`;
   }
 
@@ -74,11 +81,11 @@ window.EpiIcons = (function () {
       const hPct = Math.round((d.xp / maxVal) * 100);
       return `
         <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;">
-          <span style="font-size:11px;font-weight:700;color:#475569;font-variant-numeric:tabular-nums">${d.xp > 0 ? d.xp + ' XP' : '0'}</span>
-          <div style="width:100%;max-width:44px;height:110px;background:#f1f5f9;border-radius:8px;display:flex;align-items:flex-end;overflow:hidden;">
-            <div style="width:100%;height:${hPct}%;background:${d.xp > 0 ? '#2563eb' : '#cbd5e1'};border-radius:8px 8px 0 0;transition:height 0.3s ease;"></div>
+          <span style="font-size:11px;font-weight:700;color:var(--text-muted);font-variant-numeric:tabular-nums">${d.xp > 0 ? d.xp + ' XP' : '0'}</span>
+          <div style="width:100%;max-width:44px;height:110px;background:var(--surface-soft);border:1px solid var(--border);border-radius:8px;display:flex;align-items:flex-end;overflow:hidden;">
+            <div style="width:100%;height:${hPct}%;background:${d.xp > 0 ? 'var(--primary)' : 'var(--border-strong)'};border-radius:8px 8px 0 0;transition:height 0.3s ease;"></div>
           </div>
-          <span style="font-size:12px;font-weight:600;color:#64748b">${d.label}</span>
+          <span style="font-size:12px;font-weight:600;color:var(--text-light)">${d.label}</span>
         </div>`;
     }).join('');
     return `<div style="display:flex;align-items:flex-end;gap:10px;padding-top:10px;">${bars}</div>`;

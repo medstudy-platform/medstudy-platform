@@ -16,15 +16,15 @@ window.EpiViewsTools = (function () {
     }
 
     const renderList = (items, emptyMsg, badgeMode) => {
-      if (!items.length) return `<div style="padding:14px 0;font-size:13.5px;color:#64748b;">${emptyMsg}</div>`;
+      if (!items.length) return `<div style="padding:14px 0;font-size:13.5px;color:var(--text-light);">${emptyMsg}</div>`;
       return items.map(it => `
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid #f1f5f9;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
           <div style="min-width:0;flex:1;">
-            <div style="font-weight:600;font-size:14px;color:#0f1e3a;">
+            <div style="font-weight:600;font-size:14px;color:var(--navy);">
               <span class="badge ${it.kind === 'lesson' ? 'badge-medium' : 'badge-neutral'}" style="margin-right:6px;">${it.kind === 'lesson' ? 'Leçon' : 'Flashcard'}</span>
               ${esc(it.title)}
             </div>
-            <div style="font-size:12.5px;color:#64748b;margin-top:2px;">
+            <div style="font-size:12.5px;color:var(--text-light);margin-top:2px;">
               ${esc(it.subtitle)} ${it.intervalDays ? `· Intervalle actuel : J+${it.intervalDays}` : ''}
             </div>
           </div>
@@ -39,14 +39,14 @@ window.EpiViewsTools = (function () {
 
     const masteredHtml = rev.mastered.length
       ? rev.mastered.map(m => `
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #f1f5f9;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);">
             <div>
-              <strong style="font-size:14px;color:#065f46;">✓ ${esc(m.course.code)} · ${esc(m.lesson.title)}</strong>
-              <div style="font-size:12px;color:#64748b;">Prochaine révision : ${m.srs ? window.EpiUI.formatDueLabel(window.EpiSRS.daysUntil(m.srs.nextReviewAt)) : 'Programmée'}</div>
+              <strong style="font-size:14px;color:var(--sem-green);">✓ ${esc(m.course.code)} · ${esc(m.lesson.title)}</strong>
+              <div style="font-size:12px;color:var(--text-light);">Prochaine révision : ${m.srs ? window.EpiUI.formatDueLabel(window.EpiSRS.daysUntil(m.srs.nextReviewAt)) : 'Programmée'}</div>
             </div>
             <button class="btn btn-ghost btn-sm" data-action="go-lesson" data-course="${esc(m.course.id)}" data-lesson="${esc(m.lesson.id)}" data-step="C">Consolider</button>
           </div>`).join('')
-      : `<div style="padding:14px 0;font-size:13.5px;color:#64748b;">Aucune leçon encore maîtrisée. Validez un mini-test (≥ 80 %) pour remplir cette liste !</div>`;
+      : `<div style="padding:14px 0;font-size:13.5px;color:var(--text-light);">Aucune leçon encore maîtrisée. Validez un mini-test (≥ 80 %) pour remplir cette liste !</div>`;
 
     const updatedLessons = [];
     window.EpiData.courses.forEach(c => {
@@ -58,18 +58,18 @@ window.EpiViewsTools = (function () {
     });
 
     const updatedBoxHtml = updatedLessons.length > 0 ? `
-      <div class="card" style="margin-bottom:20px;background:#fffbeb;border:1.5px solid #fcd34d;">
+      <div class="card" style="margin-bottom:20px;background:var(--orange-soft);border:1.5px solid var(--orange-border);">
         <div class="card-header" style="margin-bottom:10px;">
           <div>
-            <h3 class="card-title" style="color:#92400e;">🔄 Leçons mises à jour par l’enseignant (${updatedLessons.length})</h3>
-            <p class="card-subtitle" style="color:#78350f;">Votre progression antérieure a été préservée ; relisez ces leçons pour intégrer les modifications récentes.</p>
+            <h3 class="card-title" style="color:var(--sem-amber);">🔄 Leçons mises à jour par l’enseignant (${updatedLessons.length})</h3>
+            <p class="card-subtitle" style="color:var(--sem-amber);">Votre progression antérieure a été préservée ; relisez ces leçons pour intégrer les modifications récentes.</p>
           </div>
         </div>
         ${updatedLessons.map(u => `
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #fde68a;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--orange-border);flex-wrap:wrap;">
             <div>
-              <strong style="color:#0f1e3a;">${esc(u.course.code)} · ${esc(u.lesson.title)}</strong>
-              <div style="font-size:12.5px;color:#78350f;">${esc(u.lesson.majorUpdateNote || 'Modification majeure de contenu — révision recommandée.')}</div>
+              <strong style="color:var(--navy);">${esc(u.course.code)} · ${esc(u.lesson.title)}</strong>
+              <div style="font-size:12.5px;color:var(--sem-amber);">${esc(u.lesson.majorUpdateNote || 'Modification majeure de contenu — révision recommandée.')}</div>
             </div>
             <button class="btn btn-warning btn-sm" data-action="go-lesson" data-course="${esc(u.course.id)}" data-lesson="${esc(u.lesson.id)}" data-step="A">Revoir la leçon →</button>
           </div>`).join('')}
@@ -102,25 +102,25 @@ window.EpiViewsTools = (function () {
         </div>
 
         <div class="kpi-grid" style="margin:18px 0 0;grid-template-columns:repeat(5,1fr);">
-          <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px;">
-            <div style="font-size:12px;color:#991b1b;font-weight:600;">En retard</div>
-            <div style="font-size:22px;font-weight:800;color:#dc2626;">${rev.overdue.length}</div>
+          <div style="background:var(--red-soft);border:1px solid var(--red-border);border-radius:10px;padding:12px;">
+            <div style="font-size:12px;color:var(--sem-red);font-weight:600;">En retard</div>
+            <div style="font-size:22px;font-weight:800;color:var(--red);">${rev.overdue.length}</div>
           </div>
-          <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px;">
-            <div style="font-size:12px;color:#92400e;font-weight:600;">Dues aujourd’hui</div>
-            <div style="font-size:22px;font-weight:800;color:#d97706;">${rev.dueToday.length}</div>
+          <div style="background:var(--orange-soft);border:1px solid var(--orange-border);border-radius:10px;padding:12px;">
+            <div style="font-size:12px;color:var(--sem-amber);font-weight:600;">Dues aujourd’hui</div>
+            <div style="font-size:22px;font-weight:800;color:var(--orange);">${rev.dueToday.length}</div>
           </div>
-          <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px;">
-            <div style="font-size:12px;color:#991b1b;font-weight:600;">Concepts oubliés</div>
-            <div style="font-size:22px;font-weight:800;color:#dc2626;">${rev.forgotten.length}</div>
+          <div style="background:var(--red-soft);border:1px solid var(--red-border);border-radius:10px;padding:12px;">
+            <div style="font-size:12px;color:var(--sem-red);font-weight:600;">Concepts oubliés</div>
+            <div style="font-size:22px;font-weight:800;color:var(--red);">${rev.forgotten.length}</div>
           </div>
-          <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:12px;">
-            <div style="font-size:12px;color:#1e3a8a;font-weight:600;">À venir</div>
-            <div style="font-size:22px;font-weight:800;color:#1d4ed8;">${rev.upcoming.length}</div>
+          <div style="background:var(--primary-soft);border:1px solid var(--primary-border);border-radius:10px;padding:12px;">
+            <div style="font-size:12px;color:var(--sem-blue);font-weight:600;">À venir</div>
+            <div style="font-size:22px;font-weight:800;color:var(--sem-blue);">${rev.upcoming.length}</div>
           </div>
-          <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:12px;">
-            <div style="font-size:12px;color:#065f46;font-weight:600;">Sujets maîtrisés</div>
-            <div style="font-size:22px;font-weight:800;color:#059669;">${rev.mastered.length}</div>
+          <div style="background:var(--green-soft);border:1px solid var(--green-border);border-radius:10px;padding:12px;">
+            <div style="font-size:12px;color:var(--sem-green);font-weight:600;">Sujets maîtrisés</div>
+            <div style="font-size:22px;font-weight:800;color:var(--green);">${rev.mastered.length}</div>
           </div>
         </div>
       </div>
@@ -156,8 +156,8 @@ window.EpiViewsTools = (function () {
       return `
         <div class="card" style="max-width:680px;margin:20px auto;text-align:center;padding:34px;">
           <div style="font-size:40px;margin-bottom:8px;">🎯</div>
-          <h2 style="margin:0 0 8px;color:#0f1e3a;">Session de révision terminée !</h2>
-          <p style="color:#475569;margin-bottom:20px;">
+          <h2 style="margin:0 0 8px;color:var(--navy);">Session de révision terminée !</h2>
+          <p style="color:var(--text-muted);margin-bottom:20px;">
             Vous avez révisé <strong>${session.items.length} carte(s)</strong> :
             <strong>${session.knew}</strong> sue(s) ✅ · <strong>${session.partial}</strong> partielle(s) 🟠 · <strong>${session.forgot}</strong> oubliée(s) 🔴.
             Vos intervalles SRS (J+1 → J+30) ont été mis à jour automatiquement.
@@ -180,15 +180,22 @@ window.EpiViewsTools = (function () {
           <div class="progress-fill" style="width:${Math.round((session.idx / session.items.length) * 100)}%"></div>
         </div>
 
-        <div class="flashcard-box" style="box-shadow:none;">
-          <div class="flashcard-q">${esc(item.card.question)}</div>
+        <div class="edu-recall-stage">
+          <div class="edu-fc-q-zone">
+            <h4 class="edu-h4" style="margin:0 0 6px;">Question de révision SRS</h4>
+            <div class="edu-fc-question">${window.EpiFormat ? window.EpiFormat.enhanceInlineText(item.card.question, { skipLeadTerm: true }) : esc(item.card.question)}</div>
+          </div>
+          <div class="edu-fc-work-zone">
           ${!session.revealed ? `
             <button type="button" class="btn btn-primary btn-lg" style="width:100%;" data-action="srs-reveal">Révéler la réponse</button>
           ` : `
             <div>
-              <div class="flashcard-a">
-                <div><strong>Réponse :</strong> ${esc(item.card.answer)}</div>
-                ${item.card.hint ? `<div style="margin-top:6px;font-size:13px;color:#475569;"><em>💡 ${esc(item.card.hint)}</em></div>` : ''}
+              <div class="edu-fc-a-zone">
+                <div class="edu-callout-head" style="margin-bottom:6px;">
+                  <span class="edu-callout-tag">${icon('checkCircle', 14)}<span>Réponse exacte (source cours)</span></span>
+                </div>
+                <div class="edu-callout-body">${window.EpiFormat ? window.EpiFormat.renderRichAnswer(item.card.answer) : esc(item.card.answer)}</div>
+                ${item.card.hint ? `<div class="edu-fc-hint"><strong>💡 Repère :</strong> ${window.EpiFormat ? window.EpiFormat.enhanceInlineText(item.card.hint, { skipLeadTerm: true }) : esc(item.card.hint)}</div>` : ''}
               </div>
               <div class="rating-row" style="margin-top:16px;">
                 <button type="button" class="btn btn-success" data-action="srs-rate" data-rating="knew">✅ Je le savais</button>
@@ -197,6 +204,7 @@ window.EpiViewsTools = (function () {
               </div>
             </div>
           `}
+          </div>
         </div>
       </div>`;
   }
@@ -222,7 +230,7 @@ window.EpiViewsTools = (function () {
 
     const listHtml = filtered.length
       ? filtered.map(w => `
-          <div class="card" style="margin-bottom:12px;border-left:4px solid ${w.mastery.level === 'red' ? '#dc2626' : '#d97706'};">
+          <div class="card" style="margin-bottom:12px;border-left:4px solid ${w.mastery.level === 'red' ? 'var(--red)' : 'var(--orange)'};">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;">
               <div style="flex:1;min-width:250px;">
                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
@@ -230,11 +238,11 @@ window.EpiViewsTools = (function () {
                   ${window.EpiUI.masteryBadge(w.mastery)}
                   ${window.EpiUI.priorityBadge(w.lesson.priority)}
                 </div>
-                <h3 style="margin:0 0 6px;font-size:16px;color:#0f1e3a;">${esc(w.lesson.title)}</h3>
-                <div style="font-size:13.5px;color:#475569;margin-bottom:6px;">
+                <h3 style="margin:0 0 6px;font-size:16px;color:var(--navy);">${esc(w.lesson.title)}</h3>
+                <div style="font-size:13.5px;color:var(--text-muted);margin-bottom:6px;">
                   <strong>Pourquoi vous bloquez :</strong> ${esc(w.mastery.reasons.join(' · '))}
                 </div>
-                <div style="font-size:13.5px;color:#1d4ed8;">
+                <div style="font-size:13.5px;color:var(--sem-blue);">
                   <strong>Révision recommandée :</strong> ${esc(w.recommendedAction)}
                 </div>
               </div>
@@ -249,7 +257,7 @@ window.EpiViewsTools = (function () {
             </div>
           </div>`).join('')
       : `<div class="card empty-state">
-           <strong style="color:#0f1e3a;">Aucun point faible dans cette catégorie.</strong><br>
+           <strong style="color:var(--navy);">Aucun point faible dans cette catégorie.</strong><br>
            <span style="font-size:13.5px;">Vos difficultés apparaîtront automatiquement dès que vous répondrez à des QCM, flashcards ou mini-tests.</span>
          </div>`;
 
@@ -263,21 +271,21 @@ window.EpiViewsTools = (function () {
           ${failedQcms.length > 0 ? `<button class="btn btn-danger btn-sm" data-action="qcm-go-failed">Refaire mes ${failedQcms.length} QCM ratés →</button>` : ''}
         </div>
         <div class="kpi-grid" style="margin:0;grid-template-columns:repeat(4,1fr);">
-          <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px;">
-            <div style="font-size:12px;font-weight:700;color:#991b1b;">🔴 Rouge — Non maîtrisé</div>
-            <div style="font-size:22px;font-weight:800;color:#dc2626;">${redCnt}</div>
+          <div style="background:var(--red-soft);border:1px solid var(--red-border);border-radius:10px;padding:12px;">
+            <div style="font-size:12px;font-weight:700;color:var(--sem-red);">🔴 Rouge — Non maîtrisé</div>
+            <div style="font-size:22px;font-weight:800;color:var(--red);">${redCnt}</div>
           </div>
-          <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px;">
-            <div style="font-size:12px;font-weight:700;color:#92400e;">🟠 Orange — Partiel</div>
-            <div style="font-size:22px;font-weight:800;color:#d97706;">${orangeCnt}</div>
+          <div style="background:var(--orange-soft);border:1px solid var(--orange-border);border-radius:10px;padding:12px;">
+            <div style="font-size:12px;font-weight:700;color:var(--sem-amber);">🟠 Orange — Partiel</div>
+            <div style="font-size:22px;font-weight:800;color:var(--orange);">${orangeCnt}</div>
           </div>
-          <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:10px;padding:12px;">
-            <div style="font-size:12px;font-weight:700;color:#065f46;">🟢 Vert — Bien maîtrisé</div>
-            <div style="font-size:22px;font-weight:800;color:#059669;">${greenCnt}</div>
+          <div style="background:var(--green-soft);border:1px solid var(--green-border);border-radius:10px;padding:12px;">
+            <div style="font-size:12px;font-weight:700;color:var(--sem-green);">🟢 Vert — Bien maîtrisé</div>
+            <div style="font-size:22px;font-weight:800;color:var(--green);">${greenCnt}</div>
           </div>
-          <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px;">
-            <div style="font-size:12px;font-weight:700;color:#475569;">⚪ Non commencé</div>
-            <div style="font-size:22px;font-weight:800;color:#475569;">${unstartedCnt}</div>
+          <div style="background:var(--surface-soft);border:1px solid var(--border);border-radius:10px;padding:12px;">
+            <div style="font-size:12px;font-weight:700;color:var(--text-muted);">⚪ Non commencé</div>
+            <div style="font-size:22px;font-weight:800;color:var(--text-muted);">${unstartedCnt}</div>
           </div>
         </div>
       </div>
@@ -376,11 +384,11 @@ window.EpiViewsTools = (function () {
     let summaryHtml = '';
     if (exam.submitted) {
       summaryHtml = `
-        <div class="card" style="margin-bottom:20px;border:2px solid ${exam.scorePct >= 80 ? '#059669' : (exam.scorePct >= 50 ? '#d97706' : '#dc2626')};">
+        <div class="card" style="margin-bottom:20px;border:2px solid ${exam.scorePct >= 80 ? 'var(--green)' : (exam.scorePct >= 50 ? 'var(--orange)' : 'var(--red)')};">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
             <div>
-              <h2 style="margin:0 0 6px;color:#0f1e3a;">Résultat de la simulation : ${exam.scorePct} % (${exam.correctCount} / ${exam.questions.length})</h2>
-              <div style="font-size:14px;color:#475569;">Durée : ${mm}:${ss} · Toutes vos erreurs ont été automatiquement remontées dans « Mes points faibles ».</div>
+              <h2 style="margin:0 0 6px;color:var(--navy);">Résultat de la simulation : ${exam.scorePct} % (${exam.correctCount} / ${exam.questions.length})</h2>
+              <div style="font-size:14px;color:var(--text-muted);">Durée : ${mm}:${ss} · Toutes vos erreurs ont été automatiquement remontées dans « Mes points faibles ».</div>
             </div>
             <button class="btn btn-primary" data-action="exam-exit">Retour à la Banque QCM</button>
           </div>
@@ -425,26 +433,26 @@ window.EpiViewsTools = (function () {
       return `
         <div class="badge-card ${unlockedAt ? 'unlocked' : 'locked'}">
           <div style="display:flex;align-items:center;justify-content:space-between;">
-            <span style="width:36px;height:36px;border-radius:10px;background:${unlockedAt ? '#eff6ff' : '#e2e8f0'};color:${unlockedAt ? '#1d4ed8' : '#64748b'};display:flex;align-items:center;justify-content:center;">
+            <span style="width:36px;height:36px;border-radius:10px;background:${unlockedAt ? 'var(--primary-soft)' : 'var(--border)'};color:${unlockedAt ? 'var(--sem-blue)' : 'var(--text-light)'};display:flex;align-items:center;justify-content:center;">
               ${icon(b.icon, 20)}
             </span>
             <span class="badge ${unlockedAt ? 'badge-green' : 'badge-neutral'}">${unlockedAt ? 'Débloqué' : 'À débloquer'}</span>
           </div>
-          <strong style="font-size:14.5px;color:#0f1e3a;margin-top:4px;">${esc(b.title)}</strong>
-          <div style="font-size:12.5px;color:#64748b;">${esc(b.description)}</div>
-          ${unlockedAt ? `<div style="font-size:11.5px;color:#059669;margin-top:auto;">Obtenu le ${window.EpiUI.formatDateFR(unlockedAt)}</div>` : ''}
+          <strong style="font-size:14.5px;color:var(--navy);margin-top:4px;">${esc(b.title)}</strong>
+          <div style="font-size:12.5px;color:var(--text-light);">${esc(b.description)}</div>
+          ${unlockedAt ? `<div style="font-size:11.5px;color:var(--green);margin-top:auto;">Obtenu le ${window.EpiUI.formatDateFR(unlockedAt)}</div>` : ''}
         </div>`;
     }).join('');
 
     const milestonesHtml = window.EpiData.courses.map(c => {
       const st = window.EpiPlanner.getCourseStats(profile, c);
       return `
-        <div style="display:flex;align-items:center;gap:14px;padding:9px 0;border-bottom:1px solid #f1f5f9;">
+        <div style="display:flex;align-items:center;gap:14px;padding:9px 0;border-bottom:1px solid var(--border);">
           <span class="course-code-pill" style="min-width:42px;text-align:center;">${esc(c.code)}</span>
           <div style="flex:1;min-width:0;">
             <div style="display:flex;justify-content:space-between;font-size:13.5px;margin-bottom:4px;">
-              <strong style="color:#0f1e3a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(c.title)}</strong>
-              <span style="color:#475569;font-variant-numeric:tabular-nums;">${st.completed}/${st.total} (${st.masteryPct}%)</span>
+              <strong style="color:var(--navy);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(c.title)}</strong>
+              <span style="color:var(--text-muted);font-variant-numeric:tabular-nums;">${st.completed}/${st.total} (${st.masteryPct}%)</span>
             </div>
             <div class="progress-bar"><div class="progress-fill ${st.masteryPct === 100 ? 'green' : ''}" style="width:${st.masteryPct}%"></div></div>
           </div>
@@ -458,7 +466,7 @@ window.EpiViewsTools = (function () {
             <td><strong>${esc(h.label)}</strong></td>
             <td><span class="badge ${h.scorePct >= 80 ? 'badge-green' : (h.scorePct >= 50 ? 'badge-orange' : 'badge-red')}">${h.scorePct} % (${h.correct}/${h.total})</span></td>
           </tr>`).join('')}</tbody></table></div>`
-      : `<div style="font-size:13.5px;color:#64748b;padding:12px 0;">Aucun mini-test ou simulation enregistré pour l’instant.</div>`;
+      : `<div style="font-size:13.5px;color:var(--text-light);padding:12px 0;">Aucun mini-test ou simulation enregistré pour l’instant.</div>`;
 
     return `
       <div class="kpi-grid">
